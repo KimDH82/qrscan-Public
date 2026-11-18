@@ -6,6 +6,9 @@
 <input id="name" placeholder="작업자 이름 입력" style="width:100%;font-size:20px;padding:8px;box-sizing:border-box;margin-bottom:8px">
 <button id="snd" style="width:100%;font-size:20px;padding:10px;margin-bottom:8px">🔊 소리 켜기 (먼저 한 번 누르세요)</button>
 <div id="r" style="width:100%"></div>
+<div id="zoomBox" style="display:none;margin:8px 0;font-size:18px">
+  🔍 확대 <input id="zoom" type="range" style="width:75%;vertical-align:middle">
+</div>
 <p id="out" style="font-size:22px;word-break:break-all"></p>
 <script src="https://unpkg.com/html5-qrcode"></script>
 <script>
@@ -39,28 +42,61 @@ nameEl.addEventListener('input', () => {
   try { localStorage.setItem('worker', nameEl.value.trim()); } catch(e) {}
 });
 
-const s = new Html5Qrcode("r");
+const s = new Html5Qrcode("r", {
+  formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+  experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+});
 let busy = false;
-s.start({facingMode:"environment"}, {fps:10, qrbox:250}, async text => {
-  if (busy) return; busy = true;
-  const name = nameEl.value.trim();
-  if (!name) {
-    beep(300, 0.3);
-    out.textContent = '작업자 이름을 먼저 입력하세요';
+
+s.start(
+  { facingMode: "environment" },
+  {
+    fps: 15,
+    qrbox: (w, h) => {
+      const sz = Math.floor(Math.min(w, h) * 0.8);
+      return { width: sz, height: sz };
+    },
+    videoConstraints: {
+      facingMode: "environment",
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      advanced: [{ focusMode: "continuous" }]
+    }
+  },
+  async text => {
+    if (busy) return; busy = true;
+    const name = nameEl.value.trim();
+    if (!name) {
+      beep(300, 0.3);
+      out.textContent = '작업자 이름을 먼저 입력하세요';
+      setTimeout(() => busy = false, 1500);
+      return;
+    }
+    beep(1200, 0.12);
+    try { if (navigator.vibrate) navigator.vibrate(80); } catch(e) {}
+    const part = text.substring(50, 63);
+    out.textContent = part;
+    try { await navigator.clipboard.writeText(part); } catch(e) {}
+    try {
+      await fetch(URL_, {method:'POST', mode:'no-cors',
+        headers:{'Content-Type':'text/plain'},
+        body: JSON.stringify({token:TOKEN, text:text, name:name})});
+    } catch(e) { out.textContent = '전송 실패'; }
     setTimeout(() => busy = false, 1500);
-    return;
   }
-  beep(1200, 0.12);
-  try { if (navigator.vibrate) navigator.vibrate(80); } catch(e) {}
-  const part = text.substring(50, 63);
-  out.textContent = part;
-  try { await navigator.clipboard.writeText(part); } catch(e) {}
+).then(() => {
   try {
-    await fetch(URL_, {method:'POST', mode:'no-cors',
-      headers:{'Content-Type':'text/plain'},
-      body: JSON.stringify({token:TOKEN, text:text, name:name})});
-  } catch(e) { out.textContent = '전송 실패'; }
-  setTimeout(() => busy = false, 1500);
+    const z = s.getRunningTrackCameraCapabilities().zoomFeature();
+    if (z.isSupported()) {
+      const el = document.getElementById('zoom');
+      el.min = z.min(); el.max = z.max(); el.step = z.step();
+      el.value = z.value() || z.min();
+      el.oninput = () => z.apply(parseFloat(el.value));
+      document.getElementById('zoomBox').style.display = 'block';
+    }
+  } catch(e) {}
+}).catch(err => {
+  out.textContent = '카메라 실행 실패: ' + err;
 });
 </script>
 </body></html>
