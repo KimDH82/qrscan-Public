@@ -9,21 +9,23 @@
 <div id="zoomBox" style="display:none;margin:8px 0;font-size:18px">
   🔍 확대 <input id="zoom" type="range" style="width:75%;vertical-align:middle">
 </div>
-<div style="display:flex;gap:8px;margin:8px 0">
-  <button id="camBtn" style="flex:1;font-size:18px;padding:10px">🔄 카메라 전환</button>
-  <button id="shot" style="flex:1;font-size:18px;padding:10px">📷 사진으로 스캔</button>
+<div style="display:flex;gap:6px;margin:8px 0">
+  <button id="camBtn" style="flex:1;font-size:15px;padding:10px 4px">🔄 카메라 전환</button>
+  <button id="resBtn" style="flex:1;font-size:15px;padding:10px 4px">📐 해상도 변경</button>
+  <button id="shot" style="flex:1;font-size:15px;padding:10px 4px">📷 사진으로 스캔</button>
 </div>
 <input id="file" type="file" accept="image/*" capture="environment" style="display:none">
 <div id="tmp" style="display:none"></div>
 <p id="out" style="font-size:22px;word-break:break-all"></p>
-<p style="font-size:11px;color:#888;text-align:right;margin-top:24px">ver0.5 / by KDH</p>
+<p id="info" style="font-size:12px;color:#666;word-break:break-all"></p>
+<p style="font-size:11px;color:#888;text-align:right;margin-top:24px">ver0.6 / by KDH</p>
 <script src="https://unpkg.com/html5-qrcode"></script>
 <script>
 const URL_ = 'https://script.google.com/macros/s/AKfycbzoUB5_OGEZz_mlVeLWBP8-DeLDQQ6NQIEQ6XM_JjDyyV6uTi6mkbVRE0IJucNpn4kYDw/exec';
 const TOKEN = '1111';
 const $ = id => document.getElementById(id);
-const nameEl = $('name'), out = $('out'), snd = $('snd');
-const camBtn = $('camBtn'), shot = $('shot'), fileEl = $('file');
+const nameEl = $('name'), out = $('out'), snd = $('snd'), info = $('info');
+const camBtn = $('camBtn'), resBtn = $('resBtn'), shot = $('shot'), fileEl = $('file');
 
 window.addEventListener('error', e => {
   if (/lib-missing/.test(e.message || '')) return;
@@ -62,14 +64,24 @@ const s = new Html5Qrcode("r", {
   formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
   experimentalFeatures: { useBarCodeDetectorIfSupported: true }
 });
-let busy = false, scannerOn = false, decoding = false, camId = null, cams = [], session = 0;
+let bd = null;
+try { if ('BarcodeDetector' in window) bd = new BarcodeDetector({ formats: ['qr_code'] }); } catch(e) {}
+
+let busy = false, scannerOn = false, decoding = false, detecting = false;
+let camId = null, cams = [], session = 0, curLv = 1, lastDims = '';
 try { camId = localStorage.getItem('cam') || null; } catch(e) {}
 
 const LEVELS = [
-  { width: {ideal:1920}, height: {ideal:1080}, advanced: [{focusMode:"continuous"}] },
-  { width: {ideal:1280}, height: {ideal:720} },
-  {}
+  { n: '4K',    c: { width: {ideal:3840}, height: {ideal:2160}, advanced: [{focusMode:"continuous"}] } },
+  { n: '1080p', c: { width: {ideal:1920}, height: {ideal:1080}, advanced: [{focusMode:"continuous"}] } },
+  { n: '720p',  c: { width: {ideal:1280}, height: {ideal:720} } },
+  { n: '기본',  c: {} }
 ];
+let lvPref = 1;
+try {
+  const q = parseInt(localStorage.getItem('lv'));
+  if (q >= 0 && q < LEVELS.length) lvPref = q;
+} catch(e) {}
 
 async function handleScan(text) {
   if (busy) return; busy = true;
@@ -94,7 +106,7 @@ async function handleScan(text) {
 }
 
 function makeCfg(id, lv) {
-  const v = Object.assign({}, LEVELS[lv]);
+  const v = Object.assign({}, LEVELS[lv].c);
   if (id) v.deviceId = { exact: id }; else v.facingMode = "environment";
   return {
     fps: 15,
@@ -121,7 +133,19 @@ function setupZoom() {
   } catch(e) {}
 }
 
-async function startScanner(id, lv = 0) {
+function showInfo() {
+  setTimeout(() => {
+    const v = document.querySelector('#r video');
+    if (!v || !v.videoWidth) return;
+    let label = '';
+    try { label = v.srcObject.getVideoTracks()[0].label; } catch(e) {}
+    info.textContent = (label || '카메라') + ' / ' + v.videoWidth + 'x' + v.videoHeight +
+      ' / 설정 ' + LEVELS[curLv].n + ' / 인식기: ' + (bd ? '내장' : '기본');
+  }, 1200);
+}
+
+async function startScanner(id, lv) {
+  if (lv === undefined) lv = lvPref;
   const my = ++session;
   try {
     await s.start(id ? id : { facingMode: "environment" }, makeCfg(id, lv), handleScan);
@@ -131,13 +155,15 @@ async function startScanner(id, lv = 0) {
     if (id) {
       camId = null;
       try { localStorage.removeItem('cam'); } catch(e) {}
-      return startScanner(null, 0);
+      return startScanner(null, lvPref);
     }
     out.textContent = '카메라 실행 실패: ' + err;
     return;
   }
   scannerOn = true;
+  curLv = lv;
   setupZoom();
+  showInfo();
   try { cams = await Html5Qrcode.getCameras(); } catch(e) {}
   setTimeout(async () => {
     if (my !== session || !scannerOn) return;
@@ -155,8 +181,20 @@ async function stopScanner() {
 }
 async function resumeScanner() {
   if (scannerOn) return;
-  await startScanner(camId, 0);
+  await startScanner(camId, lvPref);
 }
+
+setInterval(async () => {
+  if (!bd || !scannerOn || busy || detecting || decoding) return;
+  const v = document.querySelector('#r video');
+  if (!v || !v.videoWidth) return;
+  detecting = true;
+  try {
+    const r = await bd.detect(v);
+    if (r.length) handleScan(r[0].rawValue);
+  } catch(e) {}
+  detecting = false;
+}, 250);
 
 camBtn.addEventListener('click', async () => {
   if (cams.length < 2) { out.textContent = '전환할 카메라가 없습니다'; return; }
@@ -165,14 +203,23 @@ camBtn.addEventListener('click', async () => {
   camId = cams[i].id;
   try { localStorage.setItem('cam', camId); } catch(e) {}
   await stopScanner();
-  await startScanner(camId, 0);
+  await startScanner(camId, lvPref);
   out.textContent = '카메라 ' + (i + 1) + '/' + cams.length + ': ' + (cams[i].label || '');
+});
+
+resBtn.addEventListener('click', async () => {
+  lvPref = (lvPref + 1) % LEVELS.length;
+  try { localStorage.setItem('lv', String(lvPref)); } catch(e) {}
+  info.textContent = '';
+  await stopScanner();
+  await startScanner(camId, lvPref);
+  out.textContent = '해상도 설정: ' + LEVELS[lvPref].n;
 });
 
 async function decodeFile(f) {
   let bmp;
   try { bmp = await createImageBitmap(f); } catch(e) { return null; }
-  const detector = ('BarcodeDetector' in window) ? new BarcodeDetector({ formats: ['qr_code'] }) : null;
+  lastDims = bmp.width + 'x' + bmp.height;
   const tmp = new Html5Qrcode("tmp");
   for (const crop of [1, 0.6]) {
     for (const sc of [1, 0.6, 0.4]) {
@@ -182,9 +229,9 @@ async function decodeFile(f) {
       c.width = Math.round(sw * sc);
       c.height = Math.round(sh * sc);
       c.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height);
-      if (detector) {
+      if (bd) {
         try {
-          const r = await detector.detect(c);
+          const r = await bd.detect(c);
           if (r.length) return r[0].rawValue;
         } catch(e) {}
       }
@@ -214,7 +261,7 @@ fileEl.addEventListener('change', async () => {
     await handleScan(text);
   } else {
     beep(300, 0.3);
-    out.textContent = '사진에서 QR을 찾지 못했습니다. 다시 찍어 보세요';
+    out.textContent = '사진에서 QR을 찾지 못했습니다 (사진 ' + lastDims + '). 다시 찍어 보세요';
   }
   resumeScanner();
 });
@@ -225,6 +272,6 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-startScanner(camId, 0);
+startScanner(camId, lvPref);
 </script>
 </body></html>
