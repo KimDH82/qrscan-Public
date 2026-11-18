@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head><body>
+<div id="r" style="width:100%"></div>
+<p id="out" style="font-size:22px;word-break:break-all"></p>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+const URL_ = https://script.google.com/macros/s/AKfycbzoUB5_OGEZz_mlVeLWBP8-DeLDQQ6NQIEQ6XM_JjDyyV6uTi6mkbVRE0IJucNpn4kYDw/exec';
+const TOKEN = '1111';
+const s = new Html5Qrcode("r");
+let busy = false;
+s.start({facingMode:"environment"}, {fps:10, qrbox:250}, async text => {
+  if (busy) return; busy = true;
+  const part = text.substring(50, 63);
+  document.getElementById('out').textContent = part;
+  try { await navigator.clipboard.writeText(part); } catch(e) {}
+  try {
+    await fetch(URL_, {method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body: JSON.stringify({token:TOKEN, text:text})});
+  } catch(e) { document.getElementById('out').textContent = '전송 실패'; }
+  setTimeout(() => busy = false, 1500);
+});
+</script>
+</body></html>
