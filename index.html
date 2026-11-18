@@ -9,14 +9,20 @@
 <div id="zoomBox" style="display:none;margin:8px 0;font-size:18px">
   🔍 확대 <input id="zoom" type="range" style="width:75%;vertical-align:middle">
 </div>
+<div style="display:flex;gap:8px;margin:8px 0">
+  <button id="camBtn" style="flex:1;font-size:18px;padding:10px">🔄 카메라 전환</button>
+  <button id="shot" style="flex:1;font-size:18px;padding:10px">📷 사진으로 스캔</button>
+</div>
+<input id="file" type="file" accept="image/*" capture="environment" style="display:none">
+<div id="tmp" style="display:none"></div>
 <p id="out" style="font-size:22px;word-break:break-all"></p>
 <script src="https://unpkg.com/html5-qrcode"></script>
 <script>
 const URL_ = 'https://script.google.com/macros/s/AKfycbzoUB5_OGEZz_mlVeLWBP8-DeLDQQ6NQIEQ6XM_JjDyyV6uTi6mkbVRE0IJucNpn4kYDw/exec';
 const TOKEN = '1111';
-const nameEl = document.getElementById('name');
-const out = document.getElementById('out');
-const snd = document.getElementById('snd');
+const $ = id => document.getElementById(id);
+const nameEl = $('name'), out = $('out'), snd = $('snd');
+const camBtn = $('camBtn'), shot = $('shot'), fileEl = $('file');
 
 let ac = null;
 function beep(freq, dur) {
@@ -46,57 +52,138 @@ const s = new Html5Qrcode("r", {
   formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
   experimentalFeatures: { useBarCodeDetectorIfSupported: true }
 });
-let busy = false;
+let busy = false, scannerOn = false, decoding = false, camId = null, cams = [];
+try { camId = localStorage.getItem('cam') || null; } catch(e) {}
 
-s.start(
-  { facingMode: "environment" },
-  {
+async function handleScan(text) {
+  if (busy) return; busy = true;
+  const name = nameEl.value.trim();
+  if (!name) {
+    beep(300, 0.3);
+    out.textContent = '작업자 이름을 먼저 입력하세요';
+    setTimeout(() => busy = false, 1500);
+    return;
+  }
+  beep(1200, 0.12);
+  try { if (navigator.vibrate) navigator.vibrate(80); } catch(e) {}
+  const part = text.substring(50, 63);
+  out.textContent = part;
+  try { await navigator.clipboard.writeText(part); } catch(e) {}
+  try {
+    await fetch(URL_, {method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body: JSON.stringify({token:TOKEN, text:text, name:name})});
+  } catch(e) { out.textContent = '전송 실패'; }
+  setTimeout(() => busy = false, 1500);
+}
+
+function makeCfg(id) {
+  const v = { width: {ideal:1920}, height: {ideal:1080}, advanced: [{focusMode:"continuous"}] };
+  if (id) v.deviceId = { exact: id }; else v.facingMode = "environment";
+  return {
     fps: 15,
     qrbox: (w, h) => {
       const sz = Math.floor(Math.min(w, h) * 0.8);
       return { width: sz, height: sz };
     },
-    videoConstraints: {
-      facingMode: "environment",
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      advanced: [{ focusMode: "continuous" }]
-    }
-  },
-  async text => {
-    if (busy) return; busy = true;
-    const name = nameEl.value.trim();
-    if (!name) {
-      beep(300, 0.3);
-      out.textContent = '작업자 이름을 먼저 입력하세요';
-      setTimeout(() => busy = false, 1500);
-      return;
-    }
-    beep(1200, 0.12);
-    try { if (navigator.vibrate) navigator.vibrate(80); } catch(e) {}
-    const part = text.substring(50, 63);
-    out.textContent = part;
-    try { await navigator.clipboard.writeText(part); } catch(e) {}
-    try {
-      await fetch(URL_, {method:'POST', mode:'no-cors',
-        headers:{'Content-Type':'text/plain'},
-        body: JSON.stringify({token:TOKEN, text:text, name:name})});
-    } catch(e) { out.textContent = '전송 실패'; }
-    setTimeout(() => busy = false, 1500);
-  }
-).then(() => {
+    videoConstraints: v
+  };
+}
+
+function setupZoom() {
+  const box = $('zoomBox');
+  box.style.display = 'none';
   try {
     const z = s.getRunningTrackCameraCapabilities().zoomFeature();
     if (z.isSupported()) {
-      const el = document.getElementById('zoom');
+      const el = $('zoom');
       el.min = z.min(); el.max = z.max(); el.step = z.step();
       el.value = z.value() || z.min();
       el.oninput = () => z.apply(parseFloat(el.value));
-      document.getElementById('zoomBox').style.display = 'block';
+      box.style.display = 'block';
     }
   } catch(e) {}
-}).catch(err => {
-  out.textContent = '카메라 실행 실패: ' + err;
+}
+
+async function startScanner(id) {
+  try {
+    await s.start(id ? id : { facingMode: "environment" }, makeCfg(id), handleScan);
+  } catch(err) {
+    if (id) {
+      camId = null;
+      try { localStorage.removeItem('cam'); } catch(e) {}
+      return startScanner(null);
+    }
+    out.textContent = '카메라 실행 실패: ' + err;
+    return;
+  }
+  scannerOn = true;
+  setupZoom();
+  try { cams = await Html5Qrcode.getCameras(); } catch(e) {}
+}
+async function stopScanner() {
+  if (!scannerOn) return;
+  scannerOn = false;
+  try { await s.stop(); } catch(e) {}
+}
+async function resumeScanner() {
+  if (scannerOn) return;
+  await startScanner(camId);
+}
+
+camBtn.addEventListener('click', async () => {
+  if (cams.length < 2) { out.textContent = '전환할 카메라가 없습니다'; return; }
+  let i = cams.findIndex(c => c.id === camId);
+  i = (i + 1) % cams.length;
+  camId = cams[i].id;
+  try { localStorage.setItem('cam', camId); } catch(e) {}
+  await stopScanner();
+  await startScanner(camId);
+  out.textContent = '카메라 ' + (i + 1) + '/' + cams.length + ': ' + (cams[i].label || '');
 });
+
+async function decodeFile(f) {
+  if ('BarcodeDetector' in window) {
+    try {
+      const bmp = await createImageBitmap(f);
+      const codes = await new BarcodeDetector({ formats: ['qr_code'] }).detect(bmp);
+      if (codes.length) return codes[0].rawValue;
+    } catch(e) {}
+  }
+  try {
+    const tmp = new Html5Qrcode("tmp");
+    return await tmp.scanFile(f, false);
+  } catch(e) {}
+  return null;
+}
+
+shot.addEventListener('click', () => {
+  fileEl.click();
+  stopScanner();
+});
+fileEl.addEventListener('change', async () => {
+  const f = fileEl.files[0];
+  if (!f) { resumeScanner(); return; }
+  decoding = true;
+  out.textContent = '사진 분석 중...';
+  const text = await decodeFile(f);
+  fileEl.value = '';
+  decoding = false;
+  if (text) {
+    await handleScan(text);
+  } else {
+    beep(300, 0.3);
+    out.textContent = '사진에서 QR을 찾지 못했습니다. 다시 찍어 보세요';
+  }
+  resumeScanner();
+});
+fileEl.addEventListener('cancel', () => { resumeScanner(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    setTimeout(() => { if (!decoding) resumeScanner(); }, 800);
+  }
+});
+
+startScanner(camId);
 </script>
 </body></html>
