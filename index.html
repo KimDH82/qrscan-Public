@@ -25,6 +25,15 @@ const $ = id => document.getElementById(id);
 const nameEl = $('name'), out = $('out'), snd = $('snd');
 const camBtn = $('camBtn'), shot = $('shot'), fileEl = $('file');
 
+window.addEventListener('error', e => {
+  if (/lib-missing/.test(e.message || '')) return;
+  out.textContent = '오류: ' + (e.message || '알 수 없음');
+});
+if (typeof Html5Qrcode === 'undefined') {
+  out.textContent = '스캐너를 불러오지 못했습니다. 인터넷 연결을 확인하고 새로고침하세요';
+  throw new Error('lib-missing');
+}
+
 let ac = null;
 function beep(freq, dur) {
   try {
@@ -53,8 +62,14 @@ const s = new Html5Qrcode("r", {
   formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
   experimentalFeatures: { useBarCodeDetectorIfSupported: true }
 });
-let busy = false, scannerOn = false, decoding = false, camId = null, cams = [];
+let busy = false, scannerOn = false, decoding = false, camId = null, cams = [], session = 0;
 try { camId = localStorage.getItem('cam') || null; } catch(e) {}
+
+const LEVELS = [
+  { width: {ideal:1920}, height: {ideal:1080}, advanced: [{focusMode:"continuous"}] },
+  { width: {ideal:1280}, height: {ideal:720} },
+  {}
+];
 
 async function handleScan(text) {
   if (busy) return; busy = true;
@@ -78,13 +93,13 @@ async function handleScan(text) {
   setTimeout(() => busy = false, 1500);
 }
 
-function makeCfg(id) {
-  const v = { width: {ideal:3840}, height: {ideal:2160}, advanced: [{focusMode:"continuous"}] };
+function makeCfg(id, lv) {
+  const v = Object.assign({}, LEVELS[lv]);
   if (id) v.deviceId = { exact: id }; else v.facingMode = "environment";
   return {
-    fps: 10,
+    fps: 15,
     qrbox: (w, h) => {
-      const sz = Math.floor(Math.min(w, h) * 0.7);
+      const sz = Math.floor(Math.min(w, h) * 0.8);
       return { width: sz, height: sz };
     },
     videoConstraints: v
@@ -99,23 +114,24 @@ function setupZoom() {
     if (z.isSupported()) {
       const el = $('zoom');
       el.min = z.min(); el.max = z.max(); el.step = z.step();
-      const start = Math.min(Math.max(2, z.min()), z.max());
-      el.value = start;
-      z.apply(start);
-      el.oninput = () => z.apply(parseFloat(el.value));
+      el.value = z.value() || z.min();
+      el.oninput = () => { Promise.resolve(z.apply(parseFloat(el.value))).catch(() => {}); };
       box.style.display = 'block';
     }
   } catch(e) {}
 }
 
-async function startScanner(id) {
+async function startScanner(id, lv = 0) {
+  const my = ++session;
   try {
-    await s.start(id ? id : { facingMode: "environment" }, makeCfg(id), handleScan);
+    await s.start(id ? id : { facingMode: "environment" }, makeCfg(id, lv), handleScan);
   } catch(err) {
+    try { await s.stop(); } catch(e) {}
+    if (lv < LEVELS.length - 1) return startScanner(id, lv + 1);
     if (id) {
       camId = null;
       try { localStorage.removeItem('cam'); } catch(e) {}
-      return startScanner(null);
+      return startScanner(null, 0);
     }
     out.textContent = '카메라 실행 실패: ' + err;
     return;
@@ -123,6 +139,14 @@ async function startScanner(id) {
   scannerOn = true;
   setupZoom();
   try { cams = await Html5Qrcode.getCameras(); } catch(e) {}
+  setTimeout(async () => {
+    if (my !== session || !scannerOn) return;
+    const v = document.querySelector('#r video');
+    if ((!v || !v.videoWidth) && lv < LEVELS.length - 1) {
+      await stopScanner();
+      startScanner(id, lv + 1);
+    }
+  }, 3000);
 }
 async function stopScanner() {
   if (!scannerOn) return;
@@ -131,7 +155,7 @@ async function stopScanner() {
 }
 async function resumeScanner() {
   if (scannerOn) return;
-  await startScanner(camId);
+  await startScanner(camId, 0);
 }
 
 camBtn.addEventListener('click', async () => {
@@ -141,7 +165,7 @@ camBtn.addEventListener('click', async () => {
   camId = cams[i].id;
   try { localStorage.setItem('cam', camId); } catch(e) {}
   await stopScanner();
-  await startScanner(camId);
+  await startScanner(camId, 0);
   out.textContent = '카메라 ' + (i + 1) + '/' + cams.length + ': ' + (cams[i].label || '');
 });
 
@@ -153,4 +177,54 @@ async function decodeFile(f) {
   for (const crop of [1, 0.6]) {
     for (const sc of [1, 0.6, 0.4]) {
       const sw = bmp.width * crop, sh = bmp.height * crop;
-      const
+      const sx = (bmp.width - sw) / 2, sy = (bmp.height - sh) / 2;
+      const c = document.createElement('canvas');
+      c.width = Math.round(sw * sc);
+      c.height = Math.round(sh * sc);
+      c.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      if (detector) {
+        try {
+          const r = await detector.detect(c);
+          if (r.length) return r[0].rawValue;
+        } catch(e) {}
+      }
+      try {
+        const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+        const file = new File([blob], 'x.png', { type: 'image/png' });
+        return await tmp.scanFile(file, false);
+      } catch(e) {}
+    }
+  }
+  return null;
+}
+
+shot.addEventListener('click', () => {
+  fileEl.click();
+  stopScanner();
+});
+fileEl.addEventListener('change', async () => {
+  const f = fileEl.files[0];
+  if (!f) { resumeScanner(); return; }
+  decoding = true;
+  out.textContent = '사진 분석 중...';
+  const text = await decodeFile(f);
+  fileEl.value = '';
+  decoding = false;
+  if (text) {
+    await handleScan(text);
+  } else {
+    beep(300, 0.3);
+    out.textContent = '사진에서 QR을 찾지 못했습니다. 다시 찍어 보세요';
+  }
+  resumeScanner();
+});
+fileEl.addEventListener('cancel', () => { resumeScanner(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    setTimeout(() => { if (!decoding) resumeScanner(); }, 800);
+  }
+});
+
+startScanner(camId, 0);
+</script>
+</body></html>
