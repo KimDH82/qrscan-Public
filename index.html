@@ -1,790 +1,390 @@
 <!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  <title>QR 코드 스캐너</title>
-
-  <script src="https://unpkg.com/html5-qrcode"></script>
-
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 12px;
-      margin: 0;
-    }
-
-    #name {
-      width: 100%;
-      box-sizing: border-box;
-      font-size: 20px;
-      padding: 10px;
-      margin-bottom: 8px;
-    }
-
-    button {
-      font-size: 16px;
-      padding: 12px 5px;
-      cursor: pointer;
-    }
-
-    #snd {
-      width: 100%;
-      margin-bottom: 8px;
-    }
-
-    #r {
-      width: 100%;
-      margin: auto;
-    }
-
-    #r video {
-      width: 100%;
-      height: auto;
-    }
-
-    #zoomBox {
-      display: none;
-      margin: 10px 0;
-      font-size: 16px;
-    }
-
-    #zoom {
-      width: 70%;
-      vertical-align: middle;
-    }
-
-    .buttons {
-      display: flex;
-      gap: 6px;
-      margin: 8px 0;
-    }
-
-    .buttons button {
-      flex: 1;
-    }
-
-    #out {
-      font-size: 22px;
-      font-weight: bold;
-      word-break: break-all;
-      margin-top: 18px;
-    }
-
-    #info {
-      font-size: 12px;
-      color: #666;
-      word-break: break-all;
-    }
-
-    #tmp {
-      display: none;
-    }
-  </style>
-</head>
-
-<body>
-
-  <h2>QR 코드 스캔</h2>
-
-  <input
-    id="name"
-    placeholder="작업자 이름 입력"
-    autocomplete="name"
-  >
-
-  <button id="snd">
-    🔊 소리 켜기 (먼저 한 번 누르세요)
-  </button>
-
-  <div id="r"></div>
-
-  <div id="zoomBox">
-    🔍 확대
-    <input id="zoom" type="range">
-  </div>
-
-  <div class="buttons">
-    <button id="camBtn">🔄 카메라 전환</button>
-    <button id="resBtn">📐 해상도 변경</button>
-    <button id="shot">📷 사진으로 스캔</button>
-  </div>
-
-  <input
-    id="file"
-    type="file"
-    accept="image/*"
-    capture="environment"
-    style="display:none"
-  >
-
-  <div id="tmp"></div>
-
-  <p id="out">QR코드를 카메라에 비춰주세요.</p>
-  <p id="info"></p>
-
-  <p style="font-size:11px;color:#888;text-align:right">
-    ver0.7 / by KDH
-  </p>
-
+<html lang="ko"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{margin:0;padding:10px;font-family:sans-serif}
+#wrap{position:relative;width:100%;background:#000;min-height:160px;overflow:hidden}
+#v{width:100%;display:block}
+#aim{position:absolute;left:50%;top:50%;width:40%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:3px solid rgba(255,255,255,.9);border-radius:10px;pointer-events:none}
+button{font-size:16px;padding:10px 6px}
+</style></head><body>
+<input id="name" placeholder="작업자 이름 입력" style="width:100%;font-size:20px;padding:8px;box-sizing:border-box;margin-bottom:8px">
+<button id="snd" style="width:100%;margin-bottom:8px">🔊 소리 켜기 (한 번 누르세요)</button>
+<div id="wrap"><video id="v" playsinline muted autoplay></video><div id="aim"></div></div>
+<button id="startBtn" style="display:none;width:100%;margin:8px 0">📷 카메라 시작</button>
+<div id="zoomBox" style="display:none;margin:8px 0;font-size:18px">
+  🔍 확대 <input id="zoom" type="range" style="width:75%;vertical-align:middle">
+</div>
+<div style="display:flex;gap:6px;margin:8px 0">
+  <button id="resBtn" style="flex:1">📐 해상도: 1080p</button>
+  <button id="shot" style="flex:1">📷 사진으로 스캔</button>
+</div>
+<input id="file" type="file" accept="image/*" capture="environment" style="display:none">
+<p id="out" style="font-size:22px;word-break:break-all"></p>
+<p id="info" style="font-size:12px;color:#666;word-break:break-all"></p>
+<p style="font-size:11px;color:#888;text-align:right;margin-top:24px">ver0.8 / by KDH</p>
 <script>
-
-// =====================================
-// 1. Google Apps Script 연결 정보
-// =====================================
-
-const URL_ =
-  'https://script.google.com/macros/s/AKfycbzoUB5_OGEZz_mlVeLWBP8-DeLDQQ6NQIEQ6XM_JjDyyV6uTi6mkbVRE0IJucNpn4kYDw/exec';
-
-// Apps Script의 TOKEN과 동일하게 입력
-const TOKEN = '여기에_TOKEN_입력';
-
-
-// =====================================
-// 2. 화면 요소
-// =====================================
-
+const URL_ = 'https://script.google.com/macros/s/AKfycbzoUB5_OGEZz_mlVeLWBP8-DeLDQQ6NQIEQ6XM_JjDyyV6uTi6mkbVRE0IJucNpn4kYDw/exec';
+const TOKEN = '1111';
 const $ = id => document.getElementById(id);
+const video = $('v'), out = $('out'), info = $('info'), nameEl = $('name'), snd = $('snd');
+const startBtn = $('startBtn'), resBtn = $('resBtn'), shot = $('shot'), fileEl = $('file');
+const zoomBox = $('zoomBox'), zoomEl = $('zoom');
 
-const nameEl = $('name');
-const out = $('out');
-const info = $('info');
+window.addEventListener('error', e => { out.textContent = '오류: ' + (e.message || '알 수 없음'); });
 
-const snd = $('snd');
-const camBtn = $('camBtn');
-const resBtn = $('resBtn');
-const shot = $('shot');
-const fileEl = $('file');
+/* ---------- 강력한 인식기(zxing-wasm) 불러오기 ---------- */
+let zxStatus = '불러오는 중';
+const ZX_URLS = [
+  'https://cdn.jsdelivr.net/npm/zxing-wasm@2.1.0/dist/iife/reader/index.js',
+  'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.1/dist/iife/reader/index.js'
+];
+function loadZx(i) {
+  if (typeof ZXingWASM !== 'undefined') { zxStatus = '준비됨'; return; }
+  if (i >= ZX_URLS.length) { zxStatus = '불러오기 실패'; return; }
+  const sc = document.createElement('script');
+  sc.src = ZX_URLS[i];
+  sc.onload = () => { zxStatus = (typeof ZXingWASM !== 'undefined') ? '준비됨' : '불러오기 실패'; };
+  sc.onerror = () => loadZx(i + 1);
+  document.head.appendChild(sc);
+}
+loadZx(0);
 
-
-// =====================================
-// 3. 오류 표시
-// =====================================
-
-window.addEventListener('error', e => {
-  out.textContent = '오류: ' + (e.message || '알 수 없음');
-});
-
-if (typeof Html5Qrcode === 'undefined') {
-  out.textContent = '스캐너를 불러오지 못했습니다. 인터넷 연결을 확인하세요.';
-  throw new Error('html5-qrcode 라이브러리 로딩 실패');
+async function zxRead(imageData) {
+  if (typeof ZXingWASM === 'undefined') return null;
+  try {
+    const r = await ZXingWASM.readBarcodes(imageData, {
+      formats: ['QRCode'], tryHarder: true, tryRotate: true, tryInvert: true
+    });
+    zxStatus = '정상';
+    const hit = r.find(x => x.text && x.isValid !== false);
+    return hit ? hit.text : null;
+  } catch(e) {
+    zxStatus = '오류: ' + (e && e.message ? e.message : e);
+    return null;
+  }
 }
 
+/* 내장 인식기(안드로이드 크롬 등). 아이폰 사파리는 보통 없음 */
+let bd = null;
+try { if ('BarcodeDetector' in window) bd = new BarcodeDetector({ formats: ['qr_code'] }); } catch(e) {}
 
-// =====================================
-// 4. 스캔음 및 진동
-// =====================================
+/* 한 장의 캔버스를 분석: 내장 인식기 먼저, 못 읽으면 강력 인식기 */
+async function decodeCanvas(c) {
+  if (bd) {
+    try {
+      const r = await bd.detect(c);
+      if (r.length && r[0].rawValue) return r[0].rawValue;
+    } catch(e) {}
+  }
+  if (typeof ZXingWASM !== 'undefined') {
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    return await zxRead(ctx.getImageData(0, 0, c.width, c.height));
+  }
+  return null;
+}
 
+/* ---------- 소리 ---------- */
 let ac = null;
-
+function unlockAudio() {
+  try {
+    if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (ac.state === 'suspended') ac.resume();
+  } catch(e) {}
+}
+['touchend', 'click'].forEach(ev => document.addEventListener(ev, unlockAudio, { once: true }));
 function beep(freq, dur) {
   try {
-    if (!ac) {
-      ac = new (window.AudioContext || window.webkitAudioContext)();
-    }
-
-    if (ac.state === 'suspended') {
-      ac.resume();
-    }
-
-    const o = ac.createOscillator();
-    const g = ac.createGain();
-
+    unlockAudio();
+    const o = ac.createOscillator(), g = ac.createGain();
     o.type = 'square';
     o.frequency.value = freq;
     g.gain.value = 0.2;
-
-    o.connect(g);
-    g.connect(ac.destination);
-
+    o.connect(g); g.connect(ac.destination);
     o.start();
     o.stop(ac.currentTime + dur);
-
   } catch(e) {}
 }
-
 snd.addEventListener('click', () => {
   beep(1200, 0.12);
   snd.textContent = '🔊 소리 켜짐';
 });
 
-
-// =====================================
-// 5. 작업자 이름 저장
-// =====================================
-
-try {
-  nameEl.value = localStorage.getItem('worker') || '';
-} catch(e) {}
-
+/* ---------- 작업자 이름 ---------- */
+try { nameEl.value = localStorage.getItem('worker') || ''; } catch(e) {}
 nameEl.addEventListener('input', () => {
-  try {
-    localStorage.setItem('worker', nameEl.value.trim());
-  } catch(e) {}
+  try { localStorage.setItem('worker', nameEl.value.trim()); } catch(e) {}
 });
 
-
-// =====================================
-// 6. QR 스캐너 생성
-// =====================================
-
-// QR 코드만 인식하도록 설정
-// BarcodeDetector 별도 실행은 사용하지 않음
-
-const scanner = new Html5Qrcode('r', {
-  formatsToSupport: [
-    Html5QrcodeSupportedFormats.QR_CODE
-  ]
-});
-
-
-// =====================================
-// 7. 카메라 및 해상도 설정
-// =====================================
-
-const LEVELS = [
-  {
-    name: '4K',
-    width: 3840,
-    height: 2160
-  },
-  {
-    name: '1080p',
-    width: 1920,
-    height: 1080
-  },
-  {
-    name: '720p',
-    width: 1280,
-    height: 720
-  },
-  {
-    name: '기본',
-    width: null,
-    height: null
-  }
-];
-
-let lvPref = 1;
-let curLv = 1;
-
-let camId = null;
-let cams = [];
-
-let scannerOn = false;
+/* ---------- 시트로 전송 ---------- */
 let busy = false;
-let decoding = false;
-let session = 0;
-
-try {
-  const savedLv = parseInt(localStorage.getItem('lv'));
-
-  if (savedLv >= 0 && savedLv < LEVELS.length) {
-    lvPref = savedLv;
-  }
-
-  camId = localStorage.getItem('cam') || null;
-
-} catch(e) {}
-
-
-// =====================================
-// 8. 카메라 설정 구성
-// =====================================
-
-function makeCfg(id, lv) {
-
-  const level = LEVELS[lv];
-
-  const constraints = {
-    facingMode: 'environment',
-    advanced: [
-      { focusMode: 'continuous' }
-    ]
-  };
-
-  if (id) {
-    constraints.deviceId = { exact: id };
-    delete constraints.facingMode;
-  }
-
-  if (level.width) {
-    constraints.width = {
-      ideal: level.width
-    };
-
-    constraints.height = {
-      ideal: level.height
-    };
-  }
-
-  return {
-    fps: 10,
-
-    // qrbox를 지정하지 않음
-    // 카메라 영상 전체를 QR 인식 영역으로 사용
-
-    videoConstraints: constraints
-  };
-}
-
-
-// =====================================
-// 9. 실제 카메라 정보 표시
-// =====================================
-
-function showInfo() {
-
-  setTimeout(() => {
-
-    const v = document.querySelector('#r video');
-
-    if (!v || !v.videoWidth) return;
-
-    let label = '';
-
-    try {
-      label = v.srcObject.getVideoTracks()[0].label;
-    } catch(e) {}
-
-    info.textContent =
-      (label || '카메라') +
-      ' / 실제 해상도: ' +
-      v.videoWidth + 'x' + v.videoHeight +
-      ' / 설정: ' + LEVELS[curLv].name;
-
-  }, 1000);
-}
-
-
-// =====================================
-// 10. 카메라 확대 기능
-// =====================================
-
-function setupZoom() {
-
-  const box = $('zoomBox');
-
-  box.style.display = 'none';
-
-  try {
-
-    const z = scanner
-      .getRunningTrackCameraCapabilities()
-      .zoomFeature();
-
-    if (z.isSupported()) {
-
-      const el = $('zoom');
-
-      el.min = z.min();
-      el.max = z.max();
-      el.step = z.step();
-      el.value = z.value() || z.min();
-
-      el.oninput = () => {
-        Promise.resolve(
-          z.apply(parseFloat(el.value))
-        ).catch(() => {});
-      };
-
-      box.style.display = 'block';
-    }
-
-  } catch(e) {}
-}
-
-
-// =====================================
-// 11. QR 데이터 Google Sheets 전송
-// =====================================
-
 async function handleScan(text) {
-
-  if (busy || decoding) return;
-
+  if (busy) return false;
   busy = true;
-
   const name = nameEl.value.trim();
-
   if (!name) {
-
     beep(300, 0.3);
-
-    out.textContent = '작업자 이름을 먼저 입력하세요.';
-
-    setTimeout(() => {
-      busy = false;
-    }, 1500);
-
-    return;
+    out.textContent = '작업자 이름을 먼저 입력하세요';
+    setTimeout(() => busy = false, 1500);
+    return false;
   }
-
   beep(1200, 0.12);
-
-  try {
-    if (navigator.vibrate) {
-      navigator.vibrate(80);
-    }
-  } catch(e) {}
-
+  try { if (navigator.vibrate) navigator.vibrate(80); } catch(e) {}
   const part = text.substring(50, 63);
-
   out.textContent = part;
-
+  try { await navigator.clipboard.writeText(part); } catch(e) {}
   try {
-    await navigator.clipboard.writeText(part);
-  } catch(e) {}
-
-  try {
-
-    await fetch(URL_, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {
-        'Content-Type': 'text/plain'
-      },
-      body: JSON.stringify({
-        token: TOKEN,
-        text: text,
-        name: name
-      })
-    });
-
-    out.textContent =
-      part + '\n\n전송 요청 완료 (스프레드시트 등록 확인 필요)';
-
-  } catch(e) {
-
-    out.textContent = '전송 요청 실패: ' + e.message;
-  }
-
-  setTimeout(() => {
-    busy = false;
-  }, 1500);
+    await fetch(URL_, { method: 'POST', mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ token: TOKEN, text: text, name: name }) });
+  } catch(e) { out.textContent = '전송 실패'; }
+  setTimeout(() => busy = false, 1500);
+  return true;
 }
 
+/* ---------- 카메라 ---------- */
+const LEVELS = [
+  { n: '1080p', w: 1920, h: 1080 },
+  { n: '4K',    w: 3840, h: 2160 },
+  { n: '720p',  w: 1280, h: 720 }
+];
+let lv = 0;
+try {
+  const q = parseInt(localStorage.getItem('lv'));
+  if (q >= 0 && q < LEVELS.length) lv = q;
+} catch(e) {}
+resBtn.textContent = '📐 해상도: ' + LEVELS[lv].n;
 
-// =====================================
-// 12. 카메라 시작
-// =====================================
+const inApp = /KAKAOTALK|NAVER|Line\/|FBAN|FBAV|Instagram|DaumApps/i.test(navigator.userAgent);
+let stream = null, track = null, running = false, starting = false, decoding = false, pickerOpen = false;
+let loopTimer = null;
 
-async function startScanner(id, lv) {
+function stopCamera() {
+  running = false;
+  clearTimeout(loopTimer);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; track = null;
+  video.srcObject = null;
+  zoomBox.style.display = 'none';
+}
 
-  if (lv === undefined) {
-    lv = lvPref;
-  }
+function showCamError(err) {
+  const n = (err && err.name) || '';
+  let m = '카메라를 열 수 없습니다 (' + n + ')';
+  if (n === 'NotAllowedError' || n === 'SecurityError') m = '카메라 권한이 거부되었습니다. 브라우저 설정에서 카메라를 허용해 주세요 (아이폰: 설정 > Safari > 카메라)';
+  else if (n === 'NotFoundError') m = '카메라를 찾을 수 없습니다';
+  else if (n === 'NotReadableError') m = '다른 앱이 카메라를 사용 중입니다';
+  if (inApp) m += ' / 카카오톡 등 앱 안의 브라우저일 수 있습니다. Safari나 Chrome에서 열어 주세요';
+  out.textContent = m;
+}
 
-  const mySession = ++session;
-
+function setupTrack() {
+  let caps = {}, st = {};
+  try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch(e) {}
+  try { st = track.getSettings ? track.getSettings() : {}; } catch(e) {}
   try {
+    if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) {
+      track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    }
+  } catch(e) {}
+  zoomBox.style.display = 'none';
+  try {
+    if (caps.zoom) {
+      zoomEl.min = caps.zoom.min;
+      zoomEl.max = caps.zoom.max;
+      zoomEl.step = caps.zoom.step || 0.1;
+      zoomEl.value = st.zoom || caps.zoom.min;
+      zoomEl.oninput = () => {
+        track.applyConstraints({ advanced: [{ zoom: parseFloat(zoomEl.value) }] }).catch(() => {});
+      };
+      zoomBox.style.display = 'block';
+    }
+  } catch(e) {}
+}
 
-    await scanner.start(
-      id
-        ? { deviceId: { exact: id } }
-        : { facingMode: 'environment' },
-
-      makeCfg(id, lv),
-
-      handleScan
-    );
-
-  } catch(err) {
-
+async function startCamera() {
+  if (starting) return false;
+  starting = true;
+  try {
+    stopCamera();
+    startBtn.style.display = 'none';
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      out.textContent = '이 브라우저는 카메라를 지원하지 않습니다. 📷 사진으로 스캔을 사용하세요';
+      return false;
+    }
+    const L = LEVELS[lv];
     try {
-      await scanner.stop();
-    } catch(e) {}
-
-    // 해상도 설정 실패 시 다음 단계로 낮춤
-    if (lv < LEVELS.length - 1) {
-      return startScanner(id, lv + 1);
-    }
-
-    // 선택한 카메라 실패 시 후면 카메라로 재시도
-    if (id) {
-
-      camId = null;
-
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: L.w }, height: { ideal: L.h } }
+      });
+    } catch(err) {
       try {
-        localStorage.removeItem('cam');
-      } catch(e) {}
-
-      return startScanner(null, lvPref);
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' } } });
+      } catch(err2) {
+        showCamError(err2);
+        startBtn.style.display = 'block';
+        return false;
+      }
     }
-
-    out.textContent = '카메라 실행 실패: ' + err;
-
-    return;
-  }
-
-  scannerOn = true;
-  curLv = lv;
-
-  setupZoom();
-  showInfo();
-
-  try {
-    cams = await Html5Qrcode.getCameras();
-  } catch(e) {}
-
-  setTimeout(async () => {
-
-    if (mySession !== session || !scannerOn) return;
-
-    const v = document.querySelector('#r video');
-
-    if ((!v || !v.videoWidth) && lv < LEVELS.length - 1) {
-
-      await stopScanner();
-
-      startScanner(id, lv + 1);
+    track = stream.getVideoTracks()[0];
+    video.setAttribute('playsinline', '');
+    video.muted = true;
+    video.srcObject = stream;
+    try { await video.play(); }
+    catch(e) {
+      startBtn.style.display = 'block';
+      out.textContent = '아래 📷 카메라 시작 버튼을 눌러 주세요';
+      return false;
     }
-
-  }, 3000);
-}
-
-
-// =====================================
-// 13. 카메라 정지 및 재시작
-// =====================================
-
-async function stopScanner() {
-
-  if (!scannerOn) return;
-
-  scannerOn = false;
-  session++;
-
-  try {
-    await scanner.stop();
-  } catch(e) {}
-}
-
-async function resumeScanner() {
-
-  if (scannerOn || decoding) return;
-
-  await startScanner(camId, lvPref);
-}
-
-
-// =====================================
-// 14. 카메라 전환
-// =====================================
-
-camBtn.addEventListener('click', async () => {
-
-  if (cams.length < 2) {
-
-    out.textContent = '전환할 카메라가 없습니다.';
-
-    return;
+    setupTrack();
+    running = true;
+    loop();
+    return true;
+  } finally {
+    starting = false;
   }
+}
 
-  let i = cams.findIndex(c => c.id === camId);
+function updateInfo() {
+  if (!running || !track) return;
+  let st = {};
+  try { st = track.getSettings ? track.getSettings() : {}; } catch(e) {}
+  info.textContent = '요청 ' + LEVELS[lv].n + ' → 실제 ' + video.videoWidth + 'x' + video.videoHeight +
+    (st.frameRate ? ' @' + Math.round(st.frameRate) + 'fps' : '') +
+    ' / 인식기: ' + (bd ? '내장+' : '') + '강력(' + zxStatus + ')';
+}
+setInterval(updateInfo, 1000);
+if (inApp) info.textContent = '앱 안의 브라우저로 보입니다. 카메라가 안 켜지면 Safari나 Chrome에서 열어 주세요';
 
-  i = (i + 1) % cams.length;
+/* ---------- 실시간 스캔: 반복 루프 하나 ---------- */
+const work = document.createElement('canvas');
+const wctx = work.getContext('2d', { willReadFrequently: true });
+const MAXPX = 2600000;
+let lastText = '', lastSeen = 0;
 
-  camId = cams[i].id;
+async function loop() {
+  if (!running) return;
+  if (!busy && !decoding && video.readyState >= 2 && video.videoWidth) {
+    try {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      let f = 1;
+      if (vw * vh > MAXPX) f = Math.sqrt(MAXPX / (vw * vh));
+      const cw = Math.round(vw * f), ch = Math.round(vh * f);
+      const sx = Math.round((vw - cw) / 2), sy = Math.round((vh - ch) / 2);
+      if (work.width !== cw) work.width = cw;
+      if (work.height !== ch) work.height = ch;
+      wctx.drawImage(video, sx, sy, cw, ch, 0, 0, cw, ch);
+      const text = await decodeCanvas(work);
+      if (text) {
+        const now = Date.now();
+        if (text === lastText && now - lastSeen < 2500) {
+          lastSeen = now;
+        } else if (await handleScan(text)) {
+          lastText = text;
+          lastSeen = now;
+        }
+      }
+    } catch(e) {}
+  }
+  if (running) loopTimer = setTimeout(loop, 100);
+}
 
-  try {
-    localStorage.setItem('cam', camId);
-  } catch(e) {}
-
-  await stopScanner();
-
-  await startScanner(camId, lvPref);
-
-  out.textContent =
-    '카메라 전환: ' +
-    (cams[i].label || '카메라 ' + (i + 1));
-});
-
-
-// =====================================
-// 15. 해상도 변경
-// =====================================
+/* ---------- 버튼 ---------- */
+startBtn.addEventListener('click', () => { startCamera(); });
 
 resBtn.addEventListener('click', async () => {
-
-  lvPref = (lvPref + 1) % LEVELS.length;
-
-  try {
-    localStorage.setItem('lv', String(lvPref));
-  } catch(e) {}
-
+  lv = (lv + 1) % LEVELS.length;
+  try { localStorage.setItem('lv', String(lv)); } catch(e) {}
+  resBtn.textContent = '📐 해상도: ' + LEVELS[lv].n;
   info.textContent = '';
-
-  await stopScanner();
-
-  await startScanner(camId, lvPref);
-
-  out.textContent =
-    '해상도 설정: ' + LEVELS[lvPref].name;
+  await startCamera();
 });
 
-
-// =====================================
-// 16. 사진에서 QR 코드 읽기
-// =====================================
-
-async function decodeFile(file) {
-
-  let bitmap;
-
-  try {
-    bitmap = await createImageBitmap(file);
-  } catch(e) {
-    return null;
+/* ---------- 사진으로 스캔 ---------- */
+let lastDims = '';
+async function loadPhoto(f) {
+  if (window.createImageBitmap) {
+    try {
+      const b = await createImageBitmap(f);
+      return { src: b, w: b.width, h: b.height };
+    } catch(e) {}
   }
-
-  const tmp = new Html5Qrcode('tmp', {
-    formatsToSupport: [
-      Html5QrcodeSupportedFormats.QR_CODE
-    ]
+  const url = URL.createObjectURL(f);
+  const im = await new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = rej;
+    i.src = url;
   });
+  return { src: im, w: im.naturalWidth, h: im.naturalHeight };
+}
 
-  // 원본 사진부터 인식 시도
-  try {
-    return await tmp.scanFile(file, false);
-  } catch(e) {}
-
-  // 중앙 부분 확대 및 축소하여 재시도
-  for (const crop of [0.7, 0.5]) {
-
-    for (const scale of [1, 1.5, 2]) {
-
-      const sw = bitmap.width * crop;
-      const sh = bitmap.height * crop;
-
-      const sx = (bitmap.width - sw) / 2;
-      const sy = (bitmap.height - sh) / 2;
-
-      const canvas = document.createElement('canvas');
-
-      canvas.width = Math.round(sw * scale);
-      canvas.height = Math.round(sh * scale);
-
-      const ctx = canvas.getContext('2d');
-
-      ctx.drawImage(
-        bitmap,
-        sx, sy, sw, sh,
-        0, 0, canvas.width, canvas.height
-      );
-
-      try {
-
-        const blob = await new Promise(resolve => {
-          canvas.toBlob(resolve, 'image/png');
-        });
-
-        if (!blob) continue;
-
-        const imageFile = new File(
-          [blob],
-          'qr.png',
-          { type: 'image/png' }
-        );
-
-        return await tmp.scanFile(imageFile, false);
-
-      } catch(e) {}
-    }
+async function decodePhoto(f) {
+  let p;
+  try { p = await loadPhoto(f); } catch(e) { return null; }
+  lastDims = p.w + 'x' + p.h;
+  const tries = [{ crop: 1, max: 3000 }, { crop: 0.6, max: 4096 }, { crop: 0.35, max: 4096 }];
+  for (const t of tries) {
+    const sw = p.w * t.crop, sh = p.h * t.crop;
+    const sx = (p.w - sw) / 2, sy = (p.h - sh) / 2;
+    const k = Math.min(1, t.max / Math.max(sw, sh));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(sw * k));
+    c.height = Math.max(1, Math.round(sh * k));
+    c.getContext('2d', { willReadFrequently: true }).drawImage(p.src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    const text = await decodeCanvas(c);
+    c.width = 1; c.height = 1;
+    if (text) return text;
   }
-
   return null;
 }
 
-
-// =====================================
-// 17. 사진 스캔 버튼
-// =====================================
-
-shot.addEventListener('click', async () => {
-
-  await stopScanner();
-
+shot.addEventListener('click', () => {
+  pickerOpen = true;
+  stopCamera();
   fileEl.click();
 });
-
 fileEl.addEventListener('change', async () => {
-
-  const file = fileEl.files[0];
-
-  if (!file) {
-    resumeScanner();
-    return;
-  }
-
+  pickerOpen = false;
+  const f = fileEl.files[0];
+  if (!f) { if (!running) startCamera(); return; }
   decoding = true;
-
-  out.textContent = '사진 분석 중입니다...';
-
-  try {
-
-    const text = await decodeFile(file);
-
-    fileEl.value = '';
-
-    if (text) {
-
-      decoding = false;
-
-      await handleScan(text);
-
-    } else {
-
-      beep(300, 0.3);
-
-      out.textContent =
-        '사진에서 QR 코드를 찾지 못했습니다. 다시 촬영해 주세요.';
-
+  out.textContent = '사진 분석 중...';
+  let text = null;
+  try { text = await decodePhoto(f); } catch(e) {}
+  fileEl.value = '';
+  decoding = false;
+  if (text) {
+    await handleScan(text);
+  } else {
+    beep(300, 0.3);
+    out.textContent = '사진에서 QR을 찾지 못했습니다 (사진 ' + lastDims +
+      ' / 강력인식기: ' + zxStatus + ' / 내장인식기: ' + (bd ? '있음' : '없음') + ')';
+  }
+  if (!running) startCamera();
+});
+fileEl.addEventListener('cancel', () => {
+  pickerOpen = false;
+  if (!running && !decoding) startCamera();
+});
+window.addEventListener('focus', () => {
+  setTimeout(() => {
+    if (pickerOpen && !decoding) {
+      pickerOpen = false;
+      if (!running) startCamera();
     }
-
-  } catch(e) {
-
-    out.textContent = '사진 분석 오류: ' + e.message;
-
-  } finally {
-
-    decoding = false;
-
-    setTimeout(() => {
-      resumeScanner();
-    }, 1000);
-  }
+  }, 1200);
 });
-
-
-// =====================================
-// 18. 앱 화면 복귀 시 카메라 재시작
-// =====================================
-
 document.addEventListener('visibilitychange', () => {
-
-  if (document.visibilityState === 'visible') {
-
-    setTimeout(() => {
-
-      if (!decoding) {
-        resumeScanner();
-      }
-
-    }, 800);
-  }
+  if (document.visibilityState !== 'visible') return;
+  setTimeout(() => {
+    if (decoding || pickerOpen) return;
+    if (!running || !track || track.readyState !== 'live') startCamera();
+  }, 600);
 });
 
-
-// =====================================
-// 19. 최초 카메라 실행
-// =====================================
-
-startScanner(camId, lvPref);
-
+startCamera();
 </script>
-
-</body>
-</html>
+</body></html>
