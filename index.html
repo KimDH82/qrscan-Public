@@ -1093,20 +1093,18 @@ async function scanLoop() {
 
 /* =====================================================
    15. 추출 데이터 처리
-   - 고정 위치 기준
-   - 51번째부터 62번째 문자
-   - 총 12자리
-   - 시작 문자는 제한하지 않음
+   - ^S 바로 다음부터 다음 ^ 직전까지 추출
+   - 글자 수에 관계없이 추출
+   - 예: ^A1.80^SBH2609163325^P1050041000^VIAS24^
+   - 추출 결과: BH2609163325
 ===================================================== */
 
 function extractBatteryData(text) {
-  const source = String(text);
+  const source = String(text ?? "");
 
-  if (source.length < 62) {
-    return "";
-  }
+  const match = source.match(/\^S([^^]+)/);
 
-  return source.substring(50, 62);
+  return match ? match[1] : "";
 }
 
 
@@ -1129,7 +1127,7 @@ function showRecentResult(text, extracted) {
     "<strong>최근 처리 결과</strong><br>" +
     "처리 시간: " + timeText + "<br>" +
     "추출 데이터: <strong>" +
-    escapeHtml(extracted || "추출 실패 (문자열 길이 부족)") +
+    escapeHtml(extracted || "추출 실패 (^S 데이터 없음)") +
     "</strong>";
 }
 
@@ -1158,7 +1156,7 @@ async function processDecodedText(text) {
 
   const extracted = extractBatteryData(text);
 
-  // 유효한 길이의 QR 데이터가 인식된 카메라를 다음 접속 때 우선 사용
+  // 유효한 QR 데이터가 인식된 카메라를 다음 접속 때 우선 사용
   if (extracted) {
     rememberSuccessfulCamera();
   }
@@ -1167,7 +1165,7 @@ async function processDecodedText(text) {
 
   if (!extracted) {
     setMainStatus("데이터 추출 실패", "error");
-    setDetailStatus("QR 문자열 길이가 62자보다 짧습니다.");
+    setDetailStatus("QR 문자열에서 ^S 다음 데이터를 찾지 못했습니다.");
 
     setTimeout(function() {
       processing = false;
