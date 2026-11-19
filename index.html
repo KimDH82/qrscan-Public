@@ -17,13 +17,13 @@ button{font-size:16px;padding:10px 6px}
   🔍 확대 <input id="zoom" type="range" style="width:75%;vertical-align:middle">
 </div>
 <div style="display:flex;gap:6px;margin:8px 0">
-  <button id="resBtn" style="flex:1">📐 해상도: 1080p</button>
+  <button id="resBtn" style="flex:1">📐 해상도: 4K</button>
   <button id="shot" style="flex:1">📷 사진으로 스캔</button>
 </div>
 <input id="file" type="file" accept="image/*" capture="environment" style="display:none">
 <p id="out" style="font-size:22px;word-break:break-all"></p>
 <p id="info" style="font-size:12px;color:#666;word-break:break-all"></p>
-<p style="font-size:11px;color:#888;text-align:right;margin-top:24px">ver0.8 / by KDH</p>
+<p style="font-size:11px;color:#888;text-align:right;margin-top:24px">ver0.9 / by KDH</p>
 <script>
 const URL_ = 'https://script.google.com/macros/s/AKfycbzoUB5_OGEZz_mlVeLWBP8-DeLDQQ6NQIEQ6XM_JjDyyV6uTi6mkbVRE0IJucNpn4kYDw/exec';
 const TOKEN = '1111';
@@ -70,17 +70,49 @@ async function zxRead(imageData) {
 let bd = null;
 try { if ('BarcodeDetector' in window) bd = new BarcodeDetector({ formats: ['qr_code'] }); } catch(e) {}
 
-/* 한 장의 캔버스를 분석: 내장 인식기 먼저, 못 읽으면 강력 인식기 */
-async function decodeCanvas(c) {
+/* 흑백 변환 + 대비 늘리기 (+ 색 반전). 반전 QR, 흐린 QR 대응 */
+function enhance(imgData, invert) {
+  const d = imgData.data, n = d.length / 4;
+  const g = new Uint8ClampedArray(n);
+  const hist = new Uint32Array(256);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const v = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8;
+    g[i] = v; hist[v]++;
+  }
+  const cut = n * 0.02;
+  let lo = 0, hi = 255, acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= cut) { lo = v; break; } }
+  acc = 0;
+  for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= cut) { hi = v; break; } }
+  const range = Math.max(1, hi - lo);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    let v = (g[i] - lo) * 255 / range;
+    v = v < 0 ? 0 : (v > 255 ? 255 : v);
+    if (invert) v = 255 - v;
+    d[j] = d[j + 1] = d[j + 2] = v;
+    d[j + 3] = 255;
+  }
+  return imgData;
+}
+
+/* 한 장의 캔버스를 분석: 내장 인식기 먼저, 못 읽으면 강력 인식기.
+   inv가 true이면 흑백·대비·반전 처리한 버전으로 분석 */
+async function decodeCanvas(c, inv) {
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  let src = c, id = null;
+  if (inv) {
+    id = enhance(ctx.getImageData(0, 0, c.width, c.height), true);
+    src = id;
+  }
   if (bd) {
     try {
-      const r = await bd.detect(c);
+      const r = await bd.detect(src);
       if (r.length && r[0].rawValue) return r[0].rawValue;
     } catch(e) {}
   }
   if (typeof ZXingWASM !== 'undefined') {
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    return await zxRead(ctx.getImageData(0, 0, c.width, c.height));
+    if (!id) id = ctx.getImageData(0, 0, c.width, c.height);
+    return await zxRead(id);
   }
   return null;
 }
@@ -145,13 +177,13 @@ async function handleScan(text) {
 
 /* ---------- 카메라 ---------- */
 const LEVELS = [
-  { n: '1080p', w: 1920, h: 1080 },
   { n: '4K',    w: 3840, h: 2160 },
+  { n: '1080p', w: 1920, h: 1080 },
   { n: '720p',  w: 1280, h: 720 }
 ];
 let lv = 0;
 try {
-  const q = parseInt(localStorage.getItem('lv'));
+  const q = parseInt(localStorage.getItem('lv2'));
   if (q >= 0 && q < LEVELS.length) lv = q;
 } catch(e) {}
 resBtn.textContent = '📐 해상도: ' + LEVELS[lv].n;
@@ -247,22 +279,49 @@ async function startCamera() {
   }
 }
 
+/* 선명도 측정(숫자가 클수록 선명): 화면 가운데 작은 영역 */
+const shc = document.createElement('canvas');
+shc.width = 256; shc.height = 256;
+const shctx = shc.getContext('2d', { willReadFrequently: true });
+let sharpVal = 0;
+setInterval(() => {
+  if (!running || !video.videoWidth || video.readyState < 2) return;
+  try {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const m = Math.min(vw, vh) * 0.25;
+    shctx.drawImage(video, (vw - m) / 2, (vh - m) / 2, m, m, 0, 0, 256, 256);
+    const d = shctx.getImageData(0, 0, 256, 256).data;
+    const g = new Float32Array(65536);
+    for (let i = 0, j = 0; i < 65536; i++, j += 4) g[i] = d[j] * 0.299 + d[j + 1] * 0.587 + d[j + 2] * 0.114;
+    let s1 = 0, s2 = 0, n = 0;
+    for (let y = 1; y < 255; y++) {
+      for (let x = 1; x < 255; x++) {
+        const i = y * 256 + x;
+        const l = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - 256] - g[i + 256];
+        s1 += l; s2 += l * l; n++;
+      }
+    }
+    sharpVal = s2 / n - (s1 / n) * (s1 / n);
+  } catch(e) {}
+}, 400);
+
 function updateInfo() {
   if (!running || !track) return;
   let st = {};
   try { st = track.getSettings ? track.getSettings() : {}; } catch(e) {}
   info.textContent = '요청 ' + LEVELS[lv].n + ' → 실제 ' + video.videoWidth + 'x' + video.videoHeight +
     (st.frameRate ? ' @' + Math.round(st.frameRate) + 'fps' : '') +
+    ' / 선명도 ' + Math.round(sharpVal) +
     ' / 인식기: ' + (bd ? '내장+' : '') + '강력(' + zxStatus + ')';
 }
-setInterval(updateInfo, 1000);
+setInterval(updateInfo, 700);
 if (inApp) info.textContent = '앱 안의 브라우저로 보입니다. 카메라가 안 켜지면 Safari나 Chrome에서 열어 주세요';
 
 /* ---------- 실시간 스캔: 반복 루프 하나 ---------- */
 const work = document.createElement('canvas');
 const wctx = work.getContext('2d', { willReadFrequently: true });
-const MAXPX = 2600000;
-let lastText = '', lastSeen = 0;
+const MAXPX = 3500000;
+let lastText = '', lastSeen = 0, tickNo = 0;
 
 async function loop() {
   if (!running) return;
@@ -276,7 +335,7 @@ async function loop() {
       if (work.width !== cw) work.width = cw;
       if (work.height !== ch) work.height = ch;
       wctx.drawImage(video, sx, sy, cw, ch, 0, 0, cw, ch);
-      const text = await decodeCanvas(work);
+      const text = await decodeCanvas(work, (tickNo++ % 2) === 1);
       if (text) {
         const now = Date.now();
         if (text === lastText && now - lastSeen < 2500) {
@@ -296,7 +355,7 @@ startBtn.addEventListener('click', () => { startCamera(); });
 
 resBtn.addEventListener('click', async () => {
   lv = (lv + 1) % LEVELS.length;
-  try { localStorage.setItem('lv', String(lv)); } catch(e) {}
+  try { localStorage.setItem('lv2', String(lv)); } catch(e) {}
   resBtn.textContent = '📐 해상도: ' + LEVELS[lv].n;
   info.textContent = '';
   await startCamera();
@@ -334,7 +393,8 @@ async function decodePhoto(f) {
     c.width = Math.max(1, Math.round(sw * k));
     c.height = Math.max(1, Math.round(sh * k));
     c.getContext('2d', { willReadFrequently: true }).drawImage(p.src, sx, sy, sw, sh, 0, 0, c.width, c.height);
-    const text = await decodeCanvas(c);
+    let text = await decodeCanvas(c, false);
+    if (!text) text = await decodeCanvas(c, true);
     c.width = 1; c.height = 1;
     if (text) return text;
   }
