@@ -14,7 +14,7 @@
 body {
   margin:0;
   padding:8px;
-  font-family:Arial, sans-serif;
+  font-family:Arial,sans-serif;
   background:#f4f6f8;
   color:#222;
   font-size:14px;
@@ -31,7 +31,6 @@ h3 {
   font-size:18px;
 }
 
-/* 작업자 이름 / 소리 설정 */
 .top-row {
   display:flex;
   align-items:center;
@@ -49,7 +48,7 @@ h3 {
   font-size:14px;
 }
 
-button, select {
+button,select {
   height:36px;
   border:1px solid #bbb;
   border-radius:6px;
@@ -67,7 +66,6 @@ button:active {
   min-width:90px;
 }
 
-/* 조작 버튼 */
 .control-row {
   display:flex;
   gap:5px;
@@ -83,10 +81,9 @@ button:active {
   white-space:nowrap;
 }
 
-/* 카메라 영역: 기존보다 약 2배 */
 .camera-box {
   width:100%;
-  height:clamp(300px, 55vh, 520px);
+  height:clamp(300px,55vh,520px);
   background:#111;
   border-radius:8px;
   overflow:hidden;
@@ -113,7 +110,6 @@ button:active {
   pointer-events:none;
 }
 
-/* 상태창 */
 .status-box {
   margin-top:7px;
   padding:9px 10px;
@@ -128,10 +124,28 @@ button:active {
   margin-bottom:5px;
 }
 
+#mainStatus.status-error {
+  color:#d93025;
+}
+
 #resultStatus {
   font-size:13px;
   line-height:1.4;
   overflow-wrap:anywhere;
+  color:#1677d2;
+  font-weight:700;
+  animation:resultPulse 1.25s ease-in-out infinite;
+}
+
+@keyframes resultPulse {
+  0%,100% {
+    opacity:1;
+    transform:scale(1);
+  }
+  50% {
+    opacity:.55;
+    transform:scale(1.015);
+  }
 }
 
 #detailStatus {
@@ -145,12 +159,26 @@ button:active {
   display:none;
 }
 
-@media (max-width:380px) {
+@media(max-width:380px) {
   body { padding:5px; }
-  .top-row, .control-row { gap:4px; }
-  button, select { padding:0 6px; font-size:12px; }
-  #soundBtn { min-width:82px; }
-  .camera-box { height:55vh; min-height:300px; }
+
+  .top-row,.control-row {
+    gap:4px;
+  }
+
+  button,select {
+    padding:0 6px;
+    font-size:12px;
+  }
+
+  #soundBtn {
+    min-width:82px;
+  }
+
+  .camera-box {
+    height:55vh;
+    min-height:300px;
+  }
 }
 </style>
 </head>
@@ -158,7 +186,7 @@ button:active {
 <body>
 <div class="container">
 
-<h3>배터리 QR Scanner <small style="font-size:11px;color:#777;">v0.12</small></h3>
+<h3>배터리 QR Scanner <small style="font-size:11px;color:#777;">v0.14</small></h3>
 
 <div class="top-row">
   <input id="workerName" class="name-input"
@@ -184,7 +212,7 @@ button:active {
 
 <div class="status-box">
   <div id="mainStatus">카메라를 준비하고 있습니다.</div>
-  <div id="resultStatus">인식 데이터: 대기 중</div>
+  <div id="resultStatus">인식 데이터: 대기</div>
   <div id="detailStatus">카메라 연결 중...</div>
 </div>
 
@@ -220,7 +248,9 @@ let cameraVersion = 0;
 let soundEnabled = false;
 let lastText = "";
 let lastScanTime = 0;
-let lastResult = "";
+
+let resultTimer = null;
+let resultSequence = 0;
 
 let barcodeDetector = null;
 
@@ -234,19 +264,21 @@ const ctx = canvas.getContext("2d", {
   willReadFrequently:true
 });
 
-const photoCanvas = document.createElement("canvas");
-const photoCtx = photoCanvas.getContext("2d", {
-  willReadFrequently:true
-});
+/* =========================================
+   작업자 이름 저장
+========================================= */
 
-/* 작업자 이름 저장 */
-workerInput.value = localStorage.getItem("qrWorkerName") || "";
+workerInput.value =
+  localStorage.getItem("qrWorkerName") || "";
 
 workerInput.addEventListener("input", () => {
-  localStorage.setItem("qrWorkerName", workerInput.value);
+  localStorage.setItem("qrWorkerName",workerInput.value);
 });
 
-/* 내장 QR 인식기 */
+/* =========================================
+   내장 QR 인식기
+========================================= */
+
 if ("BarcodeDetector" in window) {
   try {
     barcodeDetector = new BarcodeDetector({
@@ -261,16 +293,42 @@ if ("BarcodeDetector" in window) {
    상태 표시
 ========================================= */
 
-function setMainStatus(text) {
-  document.getElementById("mainStatus").textContent = text;
+function setMainStatus(text,isError=false) {
+  const element = document.getElementById("mainStatus");
+
+  element.textContent = text;
+  element.classList.toggle("status-error",isError);
 }
 
-function setResultStatus(text) {
-  document.getElementById("resultStatus").textContent = text;
+function setResultStatus(state) {
+  document.getElementById("resultStatus").textContent =
+    "인식 데이터: " + state;
 }
 
-function setDetailStatus(text) {
-  document.getElementById("detailStatus").textContent = text;
+/*
+  전송 완료 후 1초가 지나면 대기로 복귀.
+  새로운 QR이 인식되면 이전 복귀 타이머를 취소.
+*/
+
+function showResultStatus(state) {
+  resultSequence++;
+
+  const currentSequence = resultSequence;
+
+  if (resultTimer) {
+    clearTimeout(resultTimer);
+    resultTimer = null;
+  }
+
+  setResultStatus(state);
+
+  if (state === "전송 완료") {
+    resultTimer = setTimeout(() => {
+      if (currentSequence === resultSequence) {
+        setResultStatus("대기");
+      }
+    },1000);
+  }
 }
 
 /* =========================================
@@ -303,7 +361,7 @@ function playBeep() {
     gain.gain.value = 0.12;
 
     oscillator.start();
-    oscillator.stop(audio.currentTime + 0.12);
+    oscillator.stop(audio.currentTime+0.12);
 
     oscillator.onended = () => audio.close();
   } catch(e) {}
@@ -318,7 +376,7 @@ function successSignal() {
 }
 
 /* =========================================
-   카메라 목록 및 구분
+   카메라 목록
 ========================================= */
 
 async function enumerateCameras() {
@@ -331,6 +389,10 @@ async function enumerateCameras() {
 
   return cameras;
 }
+
+/* =========================================
+   카메라 전면 / 후면 구분
+========================================= */
 
 function isFrontCamera(camera) {
   const label = (camera.label || "").toLowerCase();
@@ -354,31 +416,52 @@ function isRearCamera(camera) {
 }
 
 /*
-  후면 카메라 우선 목록 구성.
-  이름이 확인되지 않는 경우에는
-  S24에서 확인한 두 번째 목록 항목을 우선 사용.
+  후면 카메라 목록 구성.
+
+  1. 이름으로 후면 카메라 확인
+  2. 최초 연결에서 environment로 선택된 카메라 우선
+  3. 이름이 불명확한 경우 전면 카메라를 제외한 장치 사용
+
+  기기별 장치 이름과 순서는 다를 수 있음.
 */
-function makeRearCameraList() {
+
+function makeRearCameraList(preferredDeviceId="") {
   const labeledRear = cameras
-    .map((camera, index) => ({camera, index}))
-    .filter(item => isRearCamera(item.camera));
+    .map((camera,index)=>({camera,index}))
+    .filter(item=>isRearCamera(item.camera));
 
-  if (labeledRear.length > 0) {
-    rearCameras = labeledRear.map(item => item.index);
-    return;
+  let list = labeledRear.map(item=>item.index);
+
+  const preferredIndex = cameras.findIndex(
+    camera=>camera.deviceId===preferredDeviceId
+  );
+
+  if (preferredIndex >= 0 &&
+      !isFrontCamera(cameras[preferredIndex])) {
+    list = [
+      preferredIndex,
+      ...list.filter(index=>index!==preferredIndex)
+    ];
   }
 
-  const unknown = cameras
-    .map((camera, index) => ({camera, index}))
-    .filter(item => !isFrontCamera(item.camera));
+  if (list.length === 0) {
+    const unknown = cameras
+      .map((camera,index)=>({camera,index}))
+      .filter(item=>!isFrontCamera(item.camera))
+      .map(item=>item.index);
 
-  if (unknown.length >= 2) {
-    rearCameras = [unknown[1].index, unknown[0].index];
-  } else if (unknown.length === 1) {
-    rearCameras = [unknown[0].index];
-  } else {
-    rearCameras = [];
+    if (preferredIndex >= 0 &&
+        unknown.includes(preferredIndex)) {
+      list = [
+        preferredIndex,
+        ...unknown.filter(index=>index!==preferredIndex)
+      ];
+    } else {
+      list = unknown;
+    }
   }
+
+  rearCameras = [...new Set(list)];
 }
 
 /* =========================================
@@ -389,14 +472,14 @@ function getResolutionConstraints() {
   const value =
     document.getElementById("resolution").value;
 
-  if (value === "4k") {
+  if (value==="4k") {
     return {
       width:{ideal:3840},
       height:{ideal:2160}
     };
   }
 
-  if (value === "1080") {
+  if (value==="1080") {
     return {
       width:{ideal:1920},
       height:{ideal:1080}
@@ -423,7 +506,7 @@ function stopCurrentCamera() {
 
   if (currentStream) {
     currentStream.getTracks().forEach(
-      track => track.stop()
+      track=>track.stop()
     );
   }
 
@@ -432,24 +515,25 @@ function stopCurrentCamera() {
 }
 
 /* =========================================
-   카메라 실행
+   카메라 연결
 ========================================= */
 
-async function openCamera(index, version) {
-  if (index < 0 || index >= cameras.length) {
-    throw new Error("선택한 카메라가 없습니다.");
+async function openCamera(index,version) {
+  if (index<0 || index>=cameras.length) {
+    throw new Error("카메라가 없습니다.");
   }
 
   const device = cameras[index];
 
   if (isFrontCamera(device)) {
-    throw new Error("전면 카메라는 자동 선택하지 않습니다.");
+    throw new Error("전면 카메라 선택 제한");
   }
 
   const constraints = {
     audio:false,
     video:{
       deviceId:{exact:device.deviceId},
+      facingMode:{ideal:"environment"},
       ...getResolutionConstraints()
     }
   };
@@ -459,9 +543,9 @@ async function openCamera(index, version) {
       constraints
     );
 
-  if (version !== cameraVersion) {
-    stream.getTracks().forEach(t => t.stop());
-    throw new Error("카메라 선택이 변경되었습니다.");
+  if (version!==cameraVersion) {
+    stream.getTracks().forEach(t=>t.stop());
+    throw new Error("카메라 연결 취소");
   }
 
   currentStream = stream;
@@ -472,6 +556,7 @@ async function openCamera(index, version) {
 
   const track = stream.getVideoTracks()[0];
   const settings = track.getSettings();
+
   const capabilities =
     track.getCapabilities ? track.getCapabilities() : {};
 
@@ -490,10 +575,10 @@ async function openCamera(index, version) {
     : "-";
 
   setDetailStatus(
-    `${settings.width || "-"}x${settings.height || "-"} / ` +
-    `${fps}fps / 카메라 ${index + 1}: ` +
-    `${device.label || "후면 카메라"} / ` +
-    `인식기: ${zxingReady ? "ZXing-WASM" : "내장 인식기 확인"}`
+    `${settings.width||"-"}x${settings.height||"-"} / `+
+    `${fps}fps / 카메라 ${index+1}: `+
+    `${device.label||"후면 카메라"} / `+
+    `인식기: ${zxingReady?"ZXing-WASM":"내장 인식기 확인"}`
   );
 
   scanning = true;
@@ -501,11 +586,7 @@ async function openCamera(index, version) {
 }
 
 /* =========================================
-   최초 카메라 자동 연결
-   - 권한 확보
-   - 카메라 목록 확인
-   - 후면 카메라 우선
-   - 전면 카메라는 자동 선택하지 않음
+   최초 카메라 연결
 ========================================= */
 
 async function startCameraSelection() {
@@ -517,39 +598,47 @@ async function startCameraSelection() {
   stopCurrentCamera();
 
   setMainStatus("카메라를 연결하고 있습니다.");
-  setResultStatus("인식 데이터: 대기 중");
+  showResultStatus("대기");
   setDetailStatus("후면 카메라 확인 중...");
 
   try {
-    /* 카메라 권한 확보 */
+    /*
+      facingMode environment를 이용해
+      브라우저가 선택한 후면 카메라를 우선 확보
+    */
+
     const tempStream =
       await navigator.mediaDevices.getUserMedia({
         audio:false,
-        video:{facingMode:{ideal:"environment"}}
+        video:{
+          facingMode:{ideal:"environment"}
+        }
       });
 
-    tempStream.getTracks().forEach(t => t.stop());
+    const tempTrack = tempStream.getVideoTracks()[0];
+    const preferredDeviceId =
+      tempTrack.getSettings().deviceId || "";
 
-    if (version !== cameraVersion) return;
+    tempStream.getTracks().forEach(t=>t.stop());
+
+    if (version!==cameraVersion) return;
 
     await enumerateCameras();
-    makeRearCameraList();
 
-    if (rearCameras.length === 0) {
-      throw new Error(
-        "후면 카메라를 확인할 수 없습니다. 카메라 권한과 기기 설정을 확인해 주세요."
-      );
+    makeRearCameraList(preferredDeviceId);
+
+    if (rearCameras.length===0) {
+      throw new Error("후면 카메라를 확인할 수 없습니다.");
     }
 
     let connected = false;
     let lastError = null;
 
-    /* 후면 카메라만 순서대로 연결 */
     for (const index of rearCameras) {
-      if (version !== cameraVersion) return;
+      if (version!==cameraVersion) return;
 
       try {
-        await openCamera(index, version);
+        await openCamera(index,version);
         connected = true;
         break;
       } catch(error) {
@@ -559,18 +648,18 @@ async function startCameraSelection() {
     }
 
     if (!connected) {
-      throw lastError || new Error("후면 카메라 연결 실패");
+      throw lastError || new Error("카메라 연결 실패");
     }
 
     setMainStatus("QR 코드를 비춰 주세요");
 
   } catch(error) {
-    if (version === cameraVersion) {
+    if (version===cameraVersion) {
       setMainStatus("카메라 연결 실패");
-      setDetailStatus(error.message);
+      setDetailStatus("카메라 권한 또는 연결 상태를 확인해 주세요.");
     }
   } finally {
-    if (version === cameraVersion) {
+    if (version===cameraVersion) {
       cameraStarting = false;
     }
   }
@@ -578,49 +667,102 @@ async function startCameraSelection() {
 
 /* =========================================
    수동 카메라 전환
-   - 사용자가 직접 누른 경우에만 전환
-   - QR 인식 실패에 따른 자동 전환 없음
 ========================================= */
 
 async function changeCamera() {
   if (cameraStarting) return;
 
-  if (cameras.length < 2) {
-    setDetailStatus("전환 가능한 카메라가 없습니다.");
-    return;
-  }
+  const oldDeviceId =
+    currentCameraIndex>=0 && cameras[currentCameraIndex]
+      ? cameras[currentCameraIndex].deviceId
+      : "";
 
-  const oldIndex = currentCameraIndex;
-
-  let nextIndex = (oldIndex + 1) % cameras.length;
-
-  /* 수동 전환은 사용자가 요청한 경우이므로
-     전면 카메라도 목록에 포함 */
   cameraStarting = true;
   const version = ++cameraVersion;
 
-  stopCurrentCamera();
   setMainStatus("카메라 전환 중...");
+  stopCurrentCamera();
 
   try {
-    await openCamera(nextIndex, version);
+    /* 기존 카메라 장치 해제 대기 */
+    await new Promise(resolve=>setTimeout(resolve,1000));
+
+    if (version!==cameraVersion) return;
+
+    await enumerateCameras();
+
+    makeRearCameraList(oldDeviceId);
+
+    const oldIndex = cameras.findIndex(
+      camera=>camera.deviceId===oldDeviceId
+    );
+
+    if (rearCameras.length===0) {
+      throw new Error("후면 카메라 없음");
+    }
+
+    const currentPosition = rearCameras.indexOf(oldIndex);
+
+    if (rearCameras.length===1) {
+      if (oldIndex>=0) {
+        await openCamera(oldIndex,version);
+      }
+
+      setMainStatus("전환 가능한 후면 카메라가 없습니다.");
+      setDetailStatus("사용 가능한 후면 카메라가 1개입니다.");
+      return;
+    }
+
+    const nextPosition = currentPosition<0
+      ? 0
+      : (currentPosition+1)%rearCameras.length;
+
+    const nextIndex = rearCameras[nextPosition];
+
+    await openCamera(nextIndex,version);
+
     setMainStatus("QR 코드를 비춰 주세요");
+    setDetailStatus("후면 카메라로 전환했습니다.");
 
   } catch(error) {
-    if (version !== cameraVersion) return;
+    if (version!==cameraVersion) return;
 
-    setMainStatus("카메라 전환 실패");
+    /* 실제 오류 코드는 표시하지 않음 */
+    setMainStatus("카메라 전환 실패",true);
+
+    stopCurrentCamera();
 
     try {
+      await new Promise(resolve=>setTimeout(resolve,1000));
+
+      if (version!==cameraVersion) return;
+
       await enumerateCameras();
-      await openCamera(oldIndex, version);
-      setMainStatus("기존 카메라로 복구했습니다.");
-    } catch(e) {
-      setDetailStatus("기존 카메라도 연결할 수 없습니다.");
+      makeRearCameraList(oldDeviceId);
+
+      const restoreIndex = cameras.findIndex(
+        camera=>camera.deviceId===oldDeviceId
+      );
+
+      if (restoreIndex<0 ||
+          isFrontCamera(cameras[restoreIndex])) {
+        throw new Error("기존 카메라 확인 실패");
+      }
+
+      await openCamera(restoreIndex,version);
+
+      setMainStatus("카메라 전환 실패",true);
+      setDetailStatus("기존 카메라로 복구했습니다.");
+
+    } catch(restoreError) {
+      if (version!==cameraVersion) return;
+
+      setMainStatus("카메라 전환 실패",true);
+      setDetailStatus("기존 카메라로 복구하지 못했습니다.");
     }
 
   } finally {
-    if (version === cameraVersion) {
+    if (version===cameraVersion) {
       cameraStarting = false;
     }
   }
@@ -631,10 +773,12 @@ async function changeCamera() {
 ========================================= */
 
 document.getElementById("resolution")
-  .addEventListener("change", async () => {
-    if (currentCameraIndex < 0 || cameraStarting) return;
+  .addEventListener("change",async()=>{
+    if (currentCameraIndex<0 || cameraStarting) return;
 
-    const index = currentCameraIndex;
+    const oldDeviceId =
+      cameras[currentCameraIndex].deviceId;
+
     cameraStarting = true;
     const version = ++cameraVersion;
 
@@ -642,13 +786,23 @@ document.getElementById("resolution")
 
     try {
       await enumerateCameras();
-      await openCamera(index, version);
+
+      const index = cameras.findIndex(
+        camera=>camera.deviceId===oldDeviceId
+      );
+
+      if (index<0) throw new Error("카메라 없음");
+
+      await openCamera(index,version);
+
       setMainStatus("QR 코드를 비춰 주세요");
+
     } catch(error) {
       setMainStatus("해상도 변경 실패");
-      setDetailStatus(error.message);
+      setDetailStatus("카메라 해상도를 변경할 수 없습니다.");
+
     } finally {
-      if (version === cameraVersion) {
+      if (version===cameraVersion) {
         cameraStarting = false;
       }
     }
@@ -667,28 +821,29 @@ function calculateSharpness(imageData) {
   let sum2 = 0;
   let count = 0;
 
-  for (let y = 1; y < h - 1; y += 3) {
-    for (let x = 1; x < w - 1; x += 3) {
-      const i = (y * w + x) * 4;
+  for (let y=1;y<h-1;y+=3) {
+    for (let x=1;x<w-1;x+=3) {
+      const i=(y*w+x)*4;
 
-      const c = data[i];
-      const up = data[((y-1)*w+x)*4];
-      const down = data[((y+1)*w+x)*4];
-      const left = data[(y*w+x-1)*4];
-      const right = data[(y*w+x+1)*4];
+      const c=data[i];
+      const up=data[((y-1)*w+x)*4];
+      const down=data[((y+1)*w+x)*4];
+      const left=data[(y*w+x-1)*4];
+      const right=data[(y*w+x+1)*4];
 
-      const lap = 4*c - up - down - left - right;
+      const lap=4*c-up-down-left-right;
 
-      sum += lap;
-      sum2 += lap * lap;
+      sum+=lap;
+      sum2+=lap*lap;
       count++;
     }
   }
 
   if (!count) return 0;
 
-  const mean = sum / count;
-  return Math.round(sum2 / count - mean * mean);
+  const mean=sum/count;
+
+  return Math.round(sum2/count-mean*mean);
 }
 
 /* =========================================
@@ -696,80 +851,76 @@ function calculateSharpness(imageData) {
 ========================================= */
 
 function makeImageVariants(sourceCanvas) {
-  const variants = [];
+  const variants=[];
 
-  const w = sourceCanvas.width;
-  const h = sourceCanvas.height;
+  const w=sourceCanvas.width;
+  const h=sourceCanvas.height;
 
   variants.push(sourceCanvas);
 
   /* 명암 보정 */
-  const enhanced = document.createElement("canvas");
-  enhanced.width = w;
-  enhanced.height = h;
+  const enhanced=document.createElement("canvas");
+  enhanced.width=w;
+  enhanced.height=h;
 
-  const ectx = enhanced.getContext("2d", {
+  const ectx=enhanced.getContext("2d",{
     willReadFrequently:true
   });
 
-  ectx.drawImage(sourceCanvas, 0, 0);
+  ectx.drawImage(sourceCanvas,0,0);
 
-  const image = ectx.getImageData(0, 0, w, h);
-  const d = image.data;
+  const image=ectx.getImageData(0,0,w,h);
+  const d=image.data;
 
-  for (let i = 0; i < d.length; i += 4) {
-    for (let c = 0; c < 3; c++) {
-      d[i+c] = Math.max(
+  for(let i=0;i<d.length;i+=4) {
+    for(let c=0;c<3;c++) {
+      d[i+c]=Math.max(
         0,
-        Math.min(255, (d[i+c] - 128) * 1.35 + 128)
+        Math.min(255,(d[i+c]-128)*1.35+128)
       );
     }
   }
 
-  ectx.putImageData(image, 0, 0);
+  ectx.putImageData(image,0,0);
   variants.push(enhanced);
 
   /* 반전 */
-  const inverted = document.createElement("canvas");
-  inverted.width = w;
-  inverted.height = h;
+  const inverted=document.createElement("canvas");
+  inverted.width=w;
+  inverted.height=h;
 
-  const ictx = inverted.getContext("2d", {
+  const ictx=inverted.getContext("2d",{
     willReadFrequently:true
   });
 
-  ictx.drawImage(enhanced, 0, 0);
+  ictx.drawImage(enhanced,0,0);
 
-  const inv = ictx.getImageData(0, 0, w, h);
+  const inv=ictx.getImageData(0,0,w,h);
 
-  for (let i = 0; i < inv.data.length; i += 4) {
-    inv.data[i] = 255 - inv.data[i];
-    inv.data[i+1] = 255 - inv.data[i+1];
-    inv.data[i+2] = 255 - inv.data[i+2];
+  for(let i=0;i<inv.data.length;i+=4) {
+    inv.data[i]=255-inv.data[i];
+    inv.data[i+1]=255-inv.data[i+1];
+    inv.data[i+2]=255-inv.data[i+2];
   }
 
-  ictx.putImageData(inv, 0, 0);
+  ictx.putImageData(inv,0,0);
   variants.push(inverted);
 
   /* 중앙 72% 영역 */
-  const crop = document.createElement("canvas");
-  crop.width = Math.round(w * 0.72);
-  crop.height = Math.round(h * 0.72);
+  const crop=document.createElement("canvas");
 
-  const cctx = crop.getContext("2d", {
+  crop.width=Math.round(w*0.72);
+  crop.height=Math.round(h*0.72);
+
+  const cctx=crop.getContext("2d",{
     willReadFrequently:true
   });
 
   cctx.drawImage(
     sourceCanvas,
-    w * 0.14,
-    h * 0.14,
-    w * 0.72,
-    h * 0.72,
-    0,
-    0,
-    crop.width,
-    crop.height
+    w*0.14,h*0.14,
+    w*0.72,h*0.72,
+    0,0,crop.width,crop.height
   );
 
   variants.push(crop);
@@ -782,43 +933,41 @@ function makeImageVariants(sourceCanvas) {
 ========================================= */
 
 async function decodeCanvas(sourceCanvas) {
-  const variants = makeImageVariants(sourceCanvas);
+  const variants=makeImageVariants(sourceCanvas);
 
   if (barcodeDetector) {
     for (const variant of variants) {
       try {
-        const results =
-          await barcodeDetector.detect(variant);
+        const results=await barcodeDetector.detect(variant);
 
-        if (results.length && results[0].rawValue) {
+        if(results.length && results[0].rawValue) {
           return results[0].rawValue;
         }
       } catch(e) {}
     }
   }
 
-  if (zxingReady) {
-    for (const variant of variants) {
+  if(zxingReady) {
+    for(const variant of variants) {
       try {
-        const vctx = variant.getContext("2d", {
+        const vctx=variant.getContext("2d",{
           willReadFrequently:true
         });
 
-        const imageData = vctx.getImageData(
-          0, 0, variant.width, variant.height
+        const imageData=vctx.getImageData(
+          0,0,variant.width,variant.height
         );
 
-        const results =
-          await window.ZXingWASM.readBarcodes(
-            imageData,
-            {
-              formats:["QRCode"],
-              tryHarder:true,
-              maxNumberOfSymbols:1
-            }
-          );
+        const results=await window.ZXingWASM.readBarcodes(
+          imageData,
+          {
+            formats:["QRCode"],
+            tryHarder:true,
+            maxNumberOfSymbols:1
+          }
+        );
 
-        if (results.length && results[0].text) {
+        if(results.length && results[0].text) {
           return results[0].text;
         }
       } catch(e) {}
@@ -830,58 +979,57 @@ async function decodeCanvas(sourceCanvas) {
 
 /* =========================================
    실시간 QR 스캔
-   - 인식 실패 시 카메라 전환하지 않음
 ========================================= */
 
 async function scanLoop() {
-  if (!scanning || !currentStream) return;
-  if (scanBusy) return;
+  if(!scanning || !currentStream) return;
+  if(scanBusy) return;
 
-  scanBusy = true;
+  scanBusy=true;
 
   try {
-    if (video.readyState >= 2 &&
-        video.videoWidth > 0 &&
-        video.videoHeight > 0) {
+    if(video.readyState>=2 &&
+       video.videoWidth>0 &&
+       video.videoHeight>0) {
 
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      canvas.width=video.videoWidth;
+      canvas.height=video.videoHeight;
 
       ctx.drawImage(
-        video, 0, 0,
-        canvas.width, canvas.height
+        video,0,0,canvas.width,canvas.height
       );
 
-      const imageData =
-        ctx.getImageData(
-          0, 0, canvas.width, canvas.height
-        );
+      const imageData=ctx.getImageData(
+        0,0,canvas.width,canvas.height
+      );
 
-      const sharpness =
-        calculateSharpness(imageData);
+      const sharpness=calculateSharpness(imageData);
 
-      const result = await decodeCanvas(canvas);
+      const result=await decodeCanvas(canvas);
 
-      if (result) {
+      if(result) {
         processDecodedText(result);
       } else {
-        setMainStatus("QR 코드를 비춰 주세요");
+        if(!document.getElementById("mainStatus")
+             .classList.contains("status-error")) {
+          setMainStatus("QR 코드를 비춰 주세요");
+        }
 
         setDetailStatus(
-          `선명도 참고값: ${sharpness} / ` +
-          `인식기: ${barcodeDetector ? "내장인식기" : ""}` +
-          `${barcodeDetector && zxingReady ? " + " : ""}` +
-          `${zxingReady ? "ZXing-WASM" : ""}`
+          `선명도 참고값: ${sharpness} / `+
+          `인식기: ${barcodeDetector?"내장인식기":""}`+
+          `${barcodeDetector&&zxingReady?" + ":""}`+
+          `${zxingReady?"ZXing-WASM":""}`
         );
       }
     }
   } catch(e) {
     console.log(e);
   } finally {
-    scanBusy = false;
+    scanBusy=false;
 
-    if (scanning) {
-      scanTimer = setTimeout(scanLoop, 120);
+    if(scanning) {
+      scanTimer=setTimeout(scanLoop,120);
     }
   }
 }
@@ -891,20 +1039,20 @@ async function scanLoop() {
 ========================================= */
 
 function processDecodedText(text) {
-  const now = Date.now();
+  const now=Date.now();
 
-  if (text === lastText && now - lastScanTime < 3000) {
+  /* 같은 QR 반복 인식 방지 */
+  if(text===lastText && now-lastScanTime<3000) {
     return;
   }
 
-  lastText = text;
-  lastScanTime = now;
-  lastResult = text;
+  lastText=text;
+  lastScanTime=now;
 
   successSignal();
 
   setMainStatus("QR 코드 인식 완료");
-  setResultStatus("인식 데이터: 전송 중...");
+  showResultStatus("전송 중");
 
   sendToSheet(text);
 }
@@ -914,16 +1062,16 @@ function processDecodedText(text) {
 ========================================= */
 
 async function sendToSheet(text) {
-  const name = workerInput.value.trim();
+  const name=workerInput.value.trim();
 
-  if (!name) {
-    setResultStatus("인식 데이터: 작업자 이름을 입력해 주세요.");
+  if(!name) {
+    showResultStatus("대기");
     setMainStatus("작업자 이름 입력 필요");
     return;
   }
 
   try {
-    await fetch(SCRIPT_URL, {
+    await fetch(SCRIPT_URL,{
       method:"POST",
       mode:"no-cors",
       headers:{
@@ -936,11 +1084,11 @@ async function sendToSheet(text) {
       })
     });
 
-    setResultStatus("인식 데이터: 전송 요청 완료");
+    showResultStatus("전송 완료");
     setMainStatus("QR 코드 인식 완료");
 
   } catch(error) {
-    setResultStatus("인식 데이터: 전송 요청 실패");
+    showResultStatus("대기");
     setMainStatus("전송 오류");
   }
 }
@@ -954,51 +1102,58 @@ function switchPhoto() {
 }
 
 async function scanPhoto(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+  const file=event.target.files[0];
+
+  if(!file) return;
 
   setMainStatus("사진 분석 중...");
-  setResultStatus("인식 데이터: 분석 중...");
+  showResultStatus("대기");
 
   try {
-    const bitmap = await createImageBitmap(file);
+    const bitmap=await createImageBitmap(file);
 
-    photoCanvas.width = bitmap.width;
-    photoCanvas.height = bitmap.height;
+    const photoCanvas=document.createElement("canvas");
+    photoCanvas.width=bitmap.width;
+    photoCanvas.height=bitmap.height;
+
+    const photoCtx=photoCanvas.getContext("2d",{
+      willReadFrequently:true
+    });
 
     photoCtx.drawImage(
-      bitmap, 0, 0,
-      bitmap.width, bitmap.height
+      bitmap,0,0,bitmap.width,bitmap.height
     );
 
-    const result = await decodeCanvas(photoCanvas);
+    const result=await decodeCanvas(photoCanvas);
 
-    if (result) {
+    if(result) {
       processDecodedText(result);
     } else {
       setMainStatus("QR 코드를 찾지 못했습니다.");
-      setResultStatus("인식 데이터: 인식 실패");
+      showResultStatus("대기");
     }
 
     bitmap.close();
 
   } catch(error) {
     setMainStatus("사진 분석 실패");
-    setResultStatus(error.message);
+    showResultStatus("대기");
   }
 
-  event.target.value = "";
+  event.target.value="";
 }
 
 /* =========================================
    앱 시작
 ========================================= */
 
-window.addEventListener("load", () => {
-  if (!navigator.mediaDevices ||
-      !navigator.mediaDevices.getUserMedia) {
+window.addEventListener("load",()=>{
+  if(!navigator.mediaDevices ||
+     !navigator.mediaDevices.getUserMedia) {
+
     setMainStatus("카메라 기능을 사용할 수 없습니다.");
     setDetailStatus("HTTPS 환경에서 접속해 주세요.");
+
     return;
   }
 
@@ -1006,7 +1161,7 @@ window.addEventListener("load", () => {
 });
 
 /* 페이지 종료 시 카메라 종료 */
-window.addEventListener("pagehide", () => {
+window.addEventListener("pagehide",()=>{
   stopCurrentCamera();
 });
 
