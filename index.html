@@ -1,7 +1,1054 @@
-function processDecodedText(text) {
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KGM 배터리 QR 스캐너</title>
+
+<!-- ZXing-WASM QR 인식 라이브러리 -->
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.7/dist/iife/reader/index.js"></script>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 12px;
+  font-family: Arial, sans-serif;
+  background: #f3f5f7;
+  color: #222;
+}
+
+.container {
+  max-width: 650px;
+  margin: 0 auto;
+}
+
+h2 {
+  margin: 8px 0 14px;
+  text-align: center;
+  font-size: 22px;
+}
+
+.panel {
+  background: white;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 7px rgba(0,0,0,0.08);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.row:last-child {
+  margin-bottom: 0;
+}
+
+.row label {
+  min-width: 82px;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+input, select, button {
+  font-size: 15px;
+  border-radius: 7px;
+  padding: 10px;
+}
+
+input, select {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid #ccc;
+  background: white;
+}
+
+button {
+  border: none;
+  background: #2864d7;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.camera-area {
+  width: 100%;
+  height: clamp(300px, 55vh, 520px);
+  background: #111;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+#video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.camera-guide {
+  position: absolute;
+  left: 12%;
+  top: 12%;
+  width: 76%;
+  height: 76%;
+  border: 2px solid rgba(255,255,255,0.75);
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.camera-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.camera-buttons button {
+  flex: 1;
+}
+
+#mainStatus {
+  text-align: center;
+  font-size: 19px;
+  font-weight: bold;
+  padding: 13px 8px;
+  border-radius: 9px;
+  background: #e8edf5;
+  color: #333;
+}
+
+#mainStatus.wait {
+  color: #333;
+  background: #e8edf5;
+}
+
+#mainStatus.sending {
+  color: #0758bd;
+  background: #e4f0ff;
+  animation: pulse 1s infinite;
+}
+
+#mainStatus.done {
+  color: #147a35;
+  background: #e4f6e9;
+}
+
+#mainStatus.error {
+  color: #c62828;
+  background: #ffebee;
+}
+
+@keyframes pulse {
+  50% { opacity: 0.55; }
+}
+
+#detailStatus {
+  font-size: 13px;
+  color: #666;
+  text-align: center;
+  margin-top: 8px;
+  min-height: 18px;
+}
+
+#recentResult {
+  background: #f1f6ff;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+#recentResult strong {
+  color: #174ea6;
+}
+
+.small-info {
+  color: #777;
+  font-size: 12px;
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+#sharpness {
+  font-size: 12px;
+  color: #777;
+  text-align: center;
+  margin-top: 7px;
+}
+
+.hidden {
+  display: none !important;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+  <h2>KGM 배터리 QR 스캐너</h2>
+
+  <!-- 작업자 및 설정 -->
+  <div class="panel">
+
+    <div class="row">
+      <label for="workerName">작업자 이름</label>
+      <input id="workerName" type="text" placeholder="작업자 이름 입력">
+    </div>
+
+    <div class="row">
+      <label for="resolution">카메라 해상도</label>
+      <select id="resolution">
+        <option value="1280">1280 × 720</option>
+        <option value="1920" selected>1920 × 1080</option>
+        <option value="2560">2560 × 1440</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label for="soundToggle">인식 소리</label>
+      <select id="soundToggle">
+        <option value="on" selected>사용</option>
+        <option value="off">사용 안 함</option>
+      </select>
+    </div>
+
+  </div>
+
+  <!-- 카메라 -->
+  <div class="panel">
+
+    <div class="camera-area">
+      <video id="video" autoplay muted playsinline></video>
+      <div class="camera-guide"></div>
+    </div>
+
+    <div id="sharpness">카메라 선명도 측정 대기</div>
+
+    <div class="camera-buttons">
+      <button id="switchCameraBtn" type="button">카메라 전환</button>
+      <button id="photoBtn" type="button">사진으로 QR 인식</button>
+    </div>
+
+    <input id="photoInput" type="file" accept="image/*" class="hidden">
+
+    <div class="small-info">
+      QR 인식 실패 시 카메라는 자동으로 전환되지 않습니다.
+      카메라 변경이 필요하면 '카메라 전환'을 눌러주세요.
+    </div>
+
+  </div>
+
+  <!-- 처리 상태 -->
+  <div class="panel">
+
+    <div id="mainStatus" class="wait">카메라 연결 준비 중</div>
+
+    <div id="detailStatus">카메라 연결을 시작합니다.</div>
+
+    <div id="recentResult">
+      <strong>최근 처리 결과</strong><br>
+      최근 처리: 없음
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+/* =====================================================
+   1. 기본 설정
+===================================================== */
+
+const SCRIPT_URL =
+  "https://script.google.com/macros/s/AKfycbzoUB5_OGEZz_mlVeLWBP8-DeLDQQ6NQIEQ6XM_JjDyyV6uTi6mkbVRE0IJucNpn4kYDw/exec";
+
+const TOKEN = "1111";
+
+const video = document.getElementById("video");
+const mainStatus = document.getElementById("mainStatus");
+const detailStatus = document.getElementById("detailStatus");
+const recentResult = document.getElementById("recentResult");
+const workerName = document.getElementById("workerName");
+const resolutionSelect = document.getElementById("resolution");
+const soundToggle = document.getElementById("soundToggle");
+const switchCameraBtn = document.getElementById("switchCameraBtn");
+const photoBtn = document.getElementById("photoBtn");
+const photoInput = document.getElementById("photoInput");
+const sharpnessText = document.getElementById("sharpness");
+
+let currentStream = null;
+let cameraList = [];
+let rearCameraList = [];
+let currentCameraIndex = -1;
+
+let cameraStarting = false;
+let cameraChanging = false;
+let scanning = false;
+let processing = false;
+
+let lastText = "";
+let lastScanTime = 0;
+
+let scanCanvas = document.createElement("canvas");
+let scanContext = scanCanvas.getContext("2d", {
+  willReadFrequently: true
+});
+
+let sharpnessCanvas = document.createElement("canvas");
+let sharpnessContext = sharpnessCanvas.getContext("2d", {
+  willReadFrequently: true
+});
+
+let barcodeDetector = null;
+let barcodeDetectorAvailable = false;
+
+const ZXING_OPTIONS = {
+  formats: ["QRCode"],
+  tryHarder: true,
+  tryRotate: true,
+  tryInvert: true,
+  maxNumberOfSymbols: 1
+};
+
+
+/* =====================================================
+   2. 화면 상태 표시
+===================================================== */
+
+function setMainStatus(message, type) {
+  mainStatus.textContent = message;
+  mainStatus.className = type || "wait";
+}
+
+function setDetailStatus(message) {
+  detailStatus.textContent = message;
+}
+
+function showResultStatus() {
+  setMainStatus("대기", "wait");
+  setDetailStatus("QR 코드를 카메라에 비춰주세요.");
+}
+
+function showRecentResult(text) {
+  const now = new Date();
+
+  const timeText =
+    now.getFullYear() + "-" +
+    String(now.getMonth() + 1).padStart(2, "0") + "-" +
+    String(now.getDate()).padStart(2, "0") + " " +
+    String(now.getHours()).padStart(2, "0") + ":" +
+    String(now.getMinutes()).padStart(2, "0") + ":" +
+    String(now.getSeconds()).padStart(2, "0");
+
+  const extracted = text.length >= 63
+    ? text.substring(50, 63)
+    : "추출 불가 (문자열 길이 부족)";
+
+  recentResult.innerHTML =
+    "<strong>최근 처리 결과</strong><br>" +
+    "처리 시간: " + timeText + "<br>" +
+    "추출 데이터: <strong>" + escapeHtml(extracted) + "</strong>";
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, function(ch) {
+    return {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    }[ch];
+  });
+}
+
+
+/* =====================================================
+   3. 작업자 이름 저장
+===================================================== */
+
+workerName.value = localStorage.getItem("kgmWorkerName") || "";
+
+workerName.addEventListener("input", function() {
+  localStorage.setItem("kgmWorkerName", workerName.value.trim());
+});
+
+
+/* =====================================================
+   4. 소리
+===================================================== */
+
+function playBeep() {
+  if (soundToggle.value === "off") return;
+
+  try {
+    const AudioContextClass =
+      window.AudioContext || window.webkitAudioContext;
+
+    if (!AudioContextClass) return;
+
+    const audioContext = new AudioContextClass();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+
+    oscillator.frequency.value = 1500;
+    gain.gain.value = 0.12;
+
+    oscillator.start();
+
+    setTimeout(function() {
+      oscillator.stop();
+      audioContext.close();
+    }, 120);
+  } catch (e) {
+    console.log("소리 재생 오류:", e);
+  }
+}
+
+
+/* =====================================================
+   5. 카메라 목록 및 후면 카메라 구분
+===================================================== */
+
+function isFrontCamera(device) {
+  const label = (device.label || "").toLowerCase();
+
+  return (
+    label.includes("front") ||
+    label.includes("user") ||
+    label.includes("facetime") ||
+    label.includes("전면") ||
+    label.includes("셀피") ||
+    label.includes("selfie")
+  );
+}
+
+function isRearCamera(device) {
+  const label = (device.label || "").toLowerCase();
+
+  return (
+    label.includes("back") ||
+    label.includes("rear") ||
+    label.includes("environment") ||
+    label.includes("후면") ||
+    label.includes("world")
+  );
+}
+
+async function enumerateCameras() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+
+  cameraList = devices.filter(function(device) {
+    return device.kind === "videoinput";
+  });
+
+  makeRearCameraList();
+
+  return cameraList;
+}
+
+function makeRearCameraList() {
+  const labelledRear = cameraList.filter(isRearCamera);
+
+  if (labelledRear.length > 0) {
+    rearCameraList = labelledRear;
+  } else {
+    // 후면 표시가 없는 카메라는 전면으로 명확히 확인된 장치만 제외
+    rearCameraList = cameraList.filter(function(device) {
+      return !isFrontCamera(device);
+    });
+  }
+
+  return rearCameraList;
+}
+
+
+/* =====================================================
+   6. 카메라 해상도 설정
+===================================================== */
+
+function getResolutionConstraints() {
+  const width = Number(resolutionSelect.value);
+
+  let height = 720;
+
+  if (width === 1920) height = 1080;
+  if (width === 2560) height = 1440;
+
+  return {
+    width: { ideal: width },
+    height: { ideal: height },
+    frameRate: { ideal: 30, max: 30 }
+  };
+}
+
+
+/* =====================================================
+   7. 현재 카메라 정지
+===================================================== */
+
+function stopCurrentCamera() {
+  scanning = false;
+
+  if (currentStream) {
+    currentStream.getTracks().forEach(function(track) {
+      track.stop();
+    });
+  }
+
+  currentStream = null;
+  video.pause();
+  video.srcObject = null;
+}
+
+
+/* =====================================================
+   8. 카메라 연결
+   - 후면 카메라 우선
+   - exact 환경 카메라 연결 시도
+   - 실패하면 ideal 환경으로 재시도
+===================================================== */
+
+async function startCameraSelection() {
+  if (cameraStarting) return;
+
+  cameraStarting = true;
+  switchCameraBtn.disabled = true;
+
+  stopCurrentCamera();
+
+  setMainStatus("카메라 연결 중", "wait");
+  setDetailStatus("후면 카메라 권한 및 연결을 확인하고 있습니다.");
+
+  try {
+    if (!navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia) {
+      throw new Error("이 브라우저에서는 카메라 기능을 사용할 수 없습니다.");
+    }
+
+    let stream = null;
+    const videoConstraints = getResolutionConstraints();
+
+    // 1차: 후면 카메라를 명시적으로 요청
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { exact: "environment" },
+          ...videoConstraints
+        }
+      });
+    } catch (firstError) {
+      console.log("후면 exact 연결 재시도:", firstError);
+
+      // 2차: 후면 카메라 우선 요청
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          ...videoConstraints
+        }
+      });
+    }
+
+    const track = stream.getVideoTracks()[0];
+
+    if (!track) {
+      stream.getTracks().forEach(t => t.stop());
+      throw new Error("카메라 영상 트랙을 가져오지 못했습니다.");
+    }
+
+    const settings = track.getSettings();
+
+    // 전면 카메라로 연결된 것이 확인되면 사용하지 않음
+    if (settings.facingMode === "user") {
+      stream.getTracks().forEach(t => t.stop());
+      throw new Error("전면 카메라가 선택되었습니다. 후면 카메라를 확인해주세요.");
+    }
+
+    currentStream = stream;
+    video.srcObject = stream;
+
+    await video.play();
+
+    // 카메라 자동 초점 설정
+    try {
+      const capabilities = track.getCapabilities();
+
+      if (capabilities.focusMode &&
+          capabilities.focusMode.includes("continuous")) {
+        await track.applyConstraints({
+          advanced: [{ focusMode: "continuous" }]
+        });
+      }
+    } catch (focusError) {
+      console.log("자동 초점 설정은 지원되지 않습니다.", focusError);
+    }
+
+    await enumerateCameras();
+
+    const currentDeviceId = settings.deviceId || "";
+
+    currentCameraIndex = rearCameraList.findIndex(function(device) {
+      return device.deviceId === currentDeviceId;
+    });
+
+    if (currentCameraIndex < 0 && rearCameraList.length > 0) {
+      currentCameraIndex = 0;
+    }
+
+    scanning = true;
+
+    setMainStatus("대기", "wait");
+    setDetailStatus("후면 카메라 연결 완료. QR 코드를 비춰주세요.");
+
+    scanLoop();
+
+  } catch (error) {
+    console.error("카메라 연결 오류:", error);
+
+    stopCurrentCamera();
+
+    setMainStatus("카메라 연결 실패", "error");
+    setDetailStatus(error.message || "카메라 권한 및 브라우저 설정을 확인해주세요.");
+
+  } finally {
+    cameraStarting = false;
+    switchCameraBtn.disabled = false;
+  }
+}
+
+
+/* =====================================================
+   9. 수동 카메라 전환
+   - 후면 카메라 목록만 순환
+   - QR 인식 실패에 따른 자동 전환 없음
+===================================================== */
+
+async function changeCamera() {
+  if (cameraChanging || cameraStarting) return;
+
+  cameraChanging = true;
+  switchCameraBtn.disabled = true;
+
+  const oldStream = currentStream;
+
+  const oldDeviceId = oldStream
+    ? (oldStream.getVideoTracks()[0].getSettings().deviceId || "")
+    : "";
+
+  setMainStatus("카메라 전환 중", "wait");
+  setDetailStatus("다른 후면 카메라를 연결하고 있습니다.");
+
+  try {
+    await enumerateCameras();
+
+    if (rearCameraList.length <= 1) {
+      throw new Error("전환할 수 있는 후면 카메라가 없습니다.");
+    }
+
+    let oldIndex = rearCameraList.findIndex(function(device) {
+      return device.deviceId === oldDeviceId;
+    });
+
+    if (oldIndex < 0) oldIndex = currentCameraIndex;
+    if (oldIndex < 0) oldIndex = 0;
+
+    const nextIndex = (oldIndex + 1) % rearCameraList.length;
+    const nextCamera = rearCameraList[nextIndex];
+
+    stopCurrentCamera();
+
+    // 기존 카메라 종료 후 장치 해제 대기
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        deviceId: { exact: nextCamera.deviceId },
+        ...getResolutionConstraints()
+      }
+    });
+
+    const track = stream.getVideoTracks()[0];
+    const settings = track.getSettings();
+
+    if (settings.facingMode === "user" || isFrontCamera(nextCamera)) {
+      stream.getTracks().forEach(t => t.stop());
+      throw new Error("전면 카메라는 사용할 수 없습니다.");
+    }
+
+    currentStream = stream;
+    video.srcObject = stream;
+    await video.play();
+
+    try {
+      const capabilities = track.getCapabilities();
+
+      if (capabilities.focusMode &&
+          capabilities.focusMode.includes("continuous")) {
+        await track.applyConstraints({
+          advanced: [{ focusMode: "continuous" }]
+        });
+      }
+    } catch (e) {
+      console.log("초점 설정 미지원:", e);
+    }
+
+    currentCameraIndex = nextIndex;
+    scanning = true;
+
+    setMainStatus("대기", "wait");
+    setDetailStatus("카메라 전환 완료: " + (nextCamera.label || "후면 카메라"));
+
+    scanLoop();
+
+  } catch (error) {
+    console.error("카메라 전환 오류:", error);
+
+    stopCurrentCamera();
+
+    setMainStatus("카메라 전환 실패", "error");
+    setDetailStatus(error.message || "기존 카메라로 다시 연결을 시도합니다.");
+
+    // 실패 시 기존 카메라 복구
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    try {
+      if (oldDeviceId) {
+        const restoreStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            deviceId: { exact: oldDeviceId },
+            ...getResolutionConstraints()
+          }
+        });
+
+        currentStream = restoreStream;
+        video.srcObject = restoreStream;
+        await video.play();
+
+        scanning = true;
+        setMainStatus("대기", "wait");
+        setDetailStatus("카메라 전환에 실패하여 기존 카메라로 복구했습니다.");
+
+        scanLoop();
+      } else {
+        await startCameraSelection();
+      }
+    } catch (restoreError) {
+      console.error("카메라 복구 실패:", restoreError);
+      setMainStatus("카메라 연결 실패", "error");
+      setDetailStatus("카메라를 다시 연결할 수 없습니다. 페이지를 새로고침해주세요.");
+    }
+
+  } finally {
+    cameraChanging = false;
+    switchCameraBtn.disabled = false;
+  }
+}
+
+switchCameraBtn.addEventListener("click", changeCamera);
+
+
+/* =====================================================
+   10. QR 이미지 전처리
+   - 원본
+   - 명암 보정
+   - 반전
+   - 중앙 확대
+===================================================== */
+
+function makeImageVariants(source, width, height) {
+  const variants = [];
+
+  const baseCanvas = document.createElement("canvas");
+  baseCanvas.width = width;
+  baseCanvas.height = height;
+
+  const baseContext = baseCanvas.getContext("2d", {
+    willReadFrequently: true
+  });
+
+  baseContext.drawImage(source, 0, 0, width, height);
+  variants.push(baseCanvas);
+
+  // 명암 보정
+  const contrastCanvas = document.createElement("canvas");
+  contrastCanvas.width = width;
+  contrastCanvas.height = height;
+
+  const contrastContext = contrastCanvas.getContext("2d", {
+    willReadFrequently: true
+  });
+
+  contrastContext.drawImage(baseCanvas, 0, 0);
+
+  const imageData = contrastContext.getImageData(0, 0, width, height);
+  const data = imageData.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    for (let c = 0; c < 3; c++) {
+      const value = data[i + c];
+      data[i + c] = Math.max(
+        0,
+        Math.min(255, (value - 128) * 1.35 + 128)
+      );
+    }
+  }
+
+  contrastContext.putImageData(imageData, 0, 0);
+  variants.push(contrastCanvas);
+
+  // 반전 이미지
+  const invertCanvas = document.createElement("canvas");
+  invertCanvas.width = width;
+  invertCanvas.height = height;
+
+  const invertContext = invertCanvas.getContext("2d", {
+    willReadFrequently: true
+  });
+
+  invertContext.drawImage(contrastCanvas, 0, 0);
+
+  const invertData = invertContext.getImageData(0, 0, width, height);
+  const invertPixels = invertData.data;
+
+  for (let i = 0; i < invertPixels.length; i += 4) {
+    invertPixels[i] = 255 - invertPixels[i];
+    invertPixels[i + 1] = 255 - invertPixels[i + 1];
+    invertPixels[i + 2] = 255 - invertPixels[i + 2];
+  }
+
+  invertContext.putImageData(invertData, 0, 0);
+  variants.push(invertCanvas);
+
+  // 중앙 72% 영역 확대
+  const cropCanvas = document.createElement("canvas");
+  cropCanvas.width = Math.round(width * 1.5);
+  cropCanvas.height = Math.round(height * 1.5);
+
+  const cropContext = cropCanvas.getContext("2d", {
+    willReadFrequently: true
+  });
+
+  const cropWidth = width * 0.72;
+  const cropHeight = height * 0.72;
+  const cropX = (width - cropWidth) / 2;
+  const cropY = (height - cropHeight) / 2;
+
+  cropContext.drawImage(
+    contrastCanvas,
+    cropX, cropY, cropWidth, cropHeight,
+    0, 0, cropCanvas.width, cropCanvas.height
+  );
+
+  variants.push(cropCanvas);
+
+  return variants;
+}
+
+
+/* =====================================================
+   11. QR 코드 인식
+   - BarcodeDetector 우선
+   - ZXing-WASM 보조
+===================================================== */
+
+async function decodeCanvas(canvas) {
+  // 1차: BarcodeDetector
+  if (barcodeDetectorAvailable && barcodeDetector) {
+    try {
+      const results = await barcodeDetector.detect(canvas);
+
+      if (results && results.length > 0 && results[0].rawValue) {
+        return results[0].rawValue;
+      }
+    } catch (e) {
+      console.log("BarcodeDetector 인식 실패:", e);
+    }
+  }
+
+  // 2차: ZXing-WASM
+  try {
+    if (!window.ZXingWASM ||
+        typeof window.ZXingWASM.readBarcodes !== "function") {
+      return null;
+    }
+
+    const ctx = canvas.getContext("2d", {
+      willReadFrequently: true
+    });
+
+    const imageData = ctx.getImageData(
+      0, 0, canvas.width, canvas.height
+    );
+
+    const results = await window.ZXingWASM.readBarcodes(
+      imageData,
+      ZXING_OPTIONS
+    );
+
+    if (results && results.length > 0 && results[0].text) {
+      return results[0].text;
+    }
+
+  } catch (e) {
+    console.log("ZXing 인식 실패:", e);
+  }
+
+  return null;
+}
+
+async function decodeSource(source, width, height) {
+  const variants = makeImageVariants(source, width, height);
+
+  for (const canvas of variants) {
+    const result = await decodeCanvas(canvas);
+
+    if (result) return result;
+  }
+
+  return null;
+}
+
+
+/* =====================================================
+   12. 카메라 선명도 참고값
+===================================================== */
+
+function updateSharpness() {
+  if (!video.videoWidth || !video.videoHeight) return;
+
+  const w = 160;
+  const h = 90;
+
+  sharpnessCanvas.width = w;
+  sharpnessCanvas.height = h;
+
+  sharpnessContext.drawImage(video, 0, 0, w, h);
+
+  const pixels = sharpnessContext.getImageData(0, 0, w, h).data;
+
+  let total = 0;
+  let count = 0;
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const index = (y * w + x) * 4;
+
+      const center =
+        (pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3;
+
+      const rightIndex = index + 4;
+      const downIndex = index + w * 4;
+
+      const right =
+        (pixels[rightIndex] + pixels[rightIndex + 1] + pixels[rightIndex + 2]) / 3;
+
+      const down =
+        (pixels[downIndex] + pixels[downIndex + 1] + pixels[downIndex + 2]) / 3;
+
+      total += Math.abs(center - right) + Math.abs(center - down);
+      count++;
+    }
+  }
+
+  const score = count ? Math.round(total / count) : 0;
+
+  sharpnessText.textContent = "화면 선명도 참고값: " + score;
+}
+
+
+/* =====================================================
+   13. 카메라 스캔 반복
+===================================================== */
+
+let lastScanLoopTime = 0;
+
+async function scanLoop() {
+  if (!scanning || !currentStream) return;
+
+  if (processing) {
+    requestAnimationFrame(scanLoop);
+    return;
+  }
+
+  if (!video.videoWidth || !video.videoHeight) {
+    requestAnimationFrame(scanLoop);
+    return;
+  }
+
   const now = Date.now();
 
-  /* 같은 QR 반복 인식 방지 */
+  // 과도한 연속 분석 방지
+  if (now - lastScanLoopTime < 180) {
+    requestAnimationFrame(scanLoop);
+    return;
+  }
+
+  lastScanLoopTime = now;
+
+  try {
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+
+    scanCanvas.width = width;
+    scanCanvas.height = height;
+
+    scanContext.drawImage(video, 0, 0, width, height);
+
+    updateSharpness();
+
+    const decodedText = await decodeSource(
+      scanCanvas,
+      width,
+      height
+    );
+
+    if (decodedText) {
+      await processDecodedText(decodedText);
+    }
+
+  } catch (error) {
+    console.log("스캔 처리 오류:", error);
+  }
+
+  if (scanning) {
+    requestAnimationFrame(scanLoop);
+  }
+}
+
+
+/* =====================================================
+   14. QR 인식 후 처리
+===================================================== */
+
+async function processDecodedText(text) {
+  if (processing) return;
+
+  const now = Date.now();
+
+  // 같은 QR 중복 인식 방지
   if (text === lastText && now - lastScanTime < 3000) {
     return;
   }
@@ -9,30 +1056,175 @@ function processDecodedText(text) {
   lastText = text;
   lastScanTime = now;
 
-  successSignal();
+  processing = true;
 
-  /* 51~63번째 문자 추출 */
-  const extractedText = text.length >= 63
-    ? text.substring(50, 63)
-    : "추출 불가 (문자열 길이 부족)";
+  playBeep();
 
-  /* 스캔 시간 */
-  const scanTime = new Date().toLocaleString("ko-KR", {
-    year:"numeric",
-    month:"2-digit",
-    day:"2-digit",
-    hour:"2-digit",
-    minute:"2-digit",
-    second:"2-digit",
-    hour12:false
+  // 최근 처리 결과 표시
+  showRecentResult(text);
+
+  // QR 데이터 전송
+  setMainStatus("전송 중", "sending");
+  setDetailStatus("QR 데이터를 구글 스프레드시트로 전송하고 있습니다.");
+
+  try {
+    await sendToSheet(text);
+
+    setMainStatus("전송 완료", "done");
+    setDetailStatus("전송 요청이 완료되었습니다.");
+
+  } catch (error) {
+    console.error("전송 오류:", error);
+
+    setMainStatus("전송 실패", "error");
+    setDetailStatus(error.message || "네트워크 연결을 확인해주세요.");
+
+  }
+
+  // 1초 후 대기 상태로 복귀
+  setTimeout(function() {
+    processing = false;
+    showResultStatus();
+  }, 1000);
+}
+
+
+/* =====================================================
+   15. 구글 스프레드시트 전송
+===================================================== */
+
+async function sendToSheet(text) {
+  const name = workerName.value.trim();
+
+  if (!name) {
+    throw new Error("작업자 이름을 입력해주세요.");
+  }
+
+  const payload = {
+    token: TOKEN,
+    text: text,
+    name: name
+  };
+
+  const response = await fetch(SCRIPT_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8"
+    },
+    body: JSON.stringify(payload)
   });
 
-  /* 최근 처리 결과 표시 */
-  document.getElementById("recentResult").textContent =
-    `최근 처리: ${scanTime} | 추출값: ${extractedText}`;
-
-  setMainStatus("QR 코드 인식 완료");
-  showResultStatus("전송 중");
-
-  sendToSheet(text);
+  // no-cors 응답은 서버 본문을 읽을 수 없음
+  // 여기서의 완료는 전송 요청 완료를 의미함
+  return true;
 }
+
+
+/* =====================================================
+   16. 사진 파일로 QR 인식
+===================================================== */
+
+photoBtn.addEventListener("click", function() {
+  photoInput.click();
+});
+
+photoInput.addEventListener("change", async function(event) {
+  const file = event.target.files[0];
+
+  if (!file) return;
+
+  if (processing) {
+    alert("현재 QR 데이터 처리 중입니다. 잠시 후 다시 시도해주세요.");
+    photoInput.value = "";
+    return;
+  }
+
+  setMainStatus("사진 분석 중", "sending");
+  setDetailStatus("선택한 사진에서 QR 코드를 찾고 있습니다.");
+
+  try {
+    const imageBitmap = await createImageBitmap(file);
+
+    const result = await decodeSource(
+      imageBitmap,
+      imageBitmap.width,
+      imageBitmap.height
+    );
+
+    imageBitmap.close();
+
+    if (result) {
+      await processDecodedText(result);
+    } else {
+      setMainStatus("QR 인식 실패", "error");
+      setDetailStatus("사진에서 QR 코드를 찾지 못했습니다.");
+    }
+
+  } catch (error) {
+    console.error("사진 QR 인식 오류:", error);
+
+    setMainStatus("사진 분석 실패", "error");
+    setDetailStatus("이미지 파일을 확인해주세요.");
+
+  } finally {
+    photoInput.value = "";
+  }
+});
+
+
+/* =====================================================
+   17. 해상도 변경
+===================================================== */
+
+resolutionSelect.addEventListener("change", async function() {
+  if (cameraStarting || cameraChanging) return;
+
+  setDetailStatus("해상도 변경을 위해 카메라를 다시 연결합니다.");
+
+  await startCameraSelection();
+});
+
+
+/* =====================================================
+   18. 초기 실행
+===================================================== */
+
+async function initializeScanner() {
+  setMainStatus("카메라 연결 준비 중", "wait");
+  setDetailStatus("QR 인식 기능을 준비하고 있습니다.");
+
+  // BarcodeDetector 사용 가능 여부 확인
+  if ("BarcodeDetector" in window) {
+    try {
+      const formats = await BarcodeDetector.getSupportedFormats();
+
+      if (formats.includes("qr_code")) {
+        barcodeDetector = new BarcodeDetector({
+          formats: ["qr_code"]
+        });
+
+        barcodeDetectorAvailable = true;
+      }
+    } catch (e) {
+      console.log("BarcodeDetector 초기화 실패:", e);
+    }
+  }
+
+  if (!window.ZXingWASM ||
+      typeof window.ZXingWASM.readBarcodes !== "function") {
+    console.warn("ZXing-WASM을 불러오지 못했습니다.");
+  }
+
+  await startCameraSelection();
+}
+
+window.addEventListener("load", initializeScanner);
+
+window.addEventListener("beforeunload", function() {
+  stopCurrentCamera();
+});
+
+</script>
+</body>
+</html>
