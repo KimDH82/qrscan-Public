@@ -362,6 +362,7 @@ async function unlockAudio() {
       pendingBeep = false;
       playBeep();
     }
+
   } catch (error) {
     console.log("오디오 활성화 실패:", error);
   }
@@ -478,6 +479,19 @@ function getCurrentDeviceId() {
   return track.getSettings().deviceId || "";
 }
 
+// QR 데이터 추출에 성공한 카메라를 다음 접속 때 우선 사용하도록 저장
+function rememberSuccessfulCamera() {
+  const deviceId = getCurrentDeviceId();
+
+  if (deviceId) {
+    try {
+      localStorage.setItem("kgmPreferredCameraDeviceId", deviceId);
+    } catch (error) {
+      console.log("카메라 설정 저장 실패:", error);
+    }
+  }
+}
+
 
 /* =====================================================
    7. 현재 카메라 정지
@@ -515,6 +529,7 @@ async function applyContinuousFocus(track) {
         advanced: [{ focusMode: "continuous" }]
       });
     }
+
   } catch (error) {
     console.log("자동 초점 설정 미지원:", error);
   }
@@ -541,6 +556,7 @@ async function openCamera(constraints) {
   try {
     video.srcObject = stream;
     await video.play();
+
   } catch (error) {
     stream.getTracks().forEach(t => t.stop());
     video.srcObject = null;
@@ -557,9 +573,11 @@ async function openCamera(constraints) {
 
 /* =====================================================
    10. 최초 카메라 연결
-   - 후면 카메라 우선
-   - exact 실패 시 ideal 재시도
-   - 연결 후 전체 카메라 목록 확인
+   - 이전 QR 인식 성공 카메라 우선
+   - camera 0 / facing back 다음 우선
+   - 일반 후면 카메라 대체
+   - 해당 카메라가 없거나 실행 실패 시 건너뜀
+   - 스캔 중 자동 카메라 전환은 하지 않음
 ===================================================== */
 
 async function startCameraSelection() {
@@ -571,7 +589,7 @@ async function startCameraSelection() {
   stopCurrentCamera();
 
   setMainStatus("카메라 연결 중", "wait");
-  setDetailStatus("후면 카메라를 우선 연결하고 있습니다.");
+  setDetailStatus("사용 가능한 후면 카메라를 확인하고 있습니다.");
 
   try {
     if (
@@ -583,25 +601,127 @@ async function startCameraSelection() {
 
     const resolution = getResolutionConstraints();
 
-    // 1차: 후면 카메라 지정
+    // 1단계: 일반 후면 카메라 우선 연결
+    // 카메라 권한을 확보한 뒤 장치 이름과 ID를 확인
     try {
-      await openCamera({
-        facingMode: { exact: "environment" },
-        ...resolution
-      });
-
-    } catch (exactError) {
-      console.log("후면 카메라 exact 연결 실패:", exactError);
-
-      // 2차: 후면 카메라 우선 요청
       await openCamera({
         facingMode: { ideal: "environment" },
         ...resolution
       });
+
+    } catch (idealError) {
+      console.log("일반 후면 카메라 연결 실패:", idealError);
+
+      // 2단계: 후면 카메라 강제 지정
+      try {
+        await openCamera({
+          facingMode: { exact: "environment" },
+          ...resolution
+        });
+
+      } catch (exactError) {
+        console.log("지정 후면 카메라 연결 실패:", exactError);
+
+        // 3단계: 방향 지정 없이 사용 가능한 카메라 연결
+        await openCamera({
+          ...resolution
+        });
+      }
     }
 
+    // 카메라 권한 확보 후 장치 목록과 이름 확인
     await enumerateCameras();
 
+    const initialDeviceId = getCurrentDeviceId();
+
+    const savedDeviceId =
+      localStorage.getItem("kgmPreferredCameraDeviceId") || "";
+
+    let preferredCamera = null;
+
+    // 우선순위 1: 이전 QR 인식 성공 카메라
+    if (savedDeviceId) {
+      preferredCamera = cameraList.find(function(device) {
+        return device.deviceId === savedDeviceId;
+      });
+
+      if (!preferredCamera) {
+        // 현재 기기에서 해당 카메라를 찾을 수 없으면 저장값 삭제
+        localStorage.removeItem("kgmPreferredCameraDeviceId");
+      }
+    }
+
+    // 우선순위 2: camera 0 / facing back
+    if (!preferredCamera) {
+      preferredCamera = cameraList.find(function(device) {
+        const label = String(device.label || "").toLowerCase();
+
+        return (
+          /camera\s*0/.test(label) &&
+          /facing\s*back/.test(label)
+        );
+      });
+    }
+
+    // 우선순위 3: 일반적인 후면 카메라 이름
+    if (!preferredCamera) {
+      preferredCamera = cameraList.find(function(device) {
+        const label = String(device.label || "").toLowerCase();
+
+        return /back|rear|environment|후면/.test(label);
+      });
+    }
+
+    // 우선 카메라가 현재 카메라와 다르면 최초 연결 시 한 번만 변경
+    if (
+      preferredCamera &&
+      preferredCamera.deviceId &&
+      preferredCamera.deviceId !== initialDeviceId
+    ) {
+      try {
+        stopCurrentCamera();
+        await new Promise(resolve => setTimeout(resolve, 250));
+
+        await openCamera({
+          deviceId: { exact: preferredCamera.deviceId },
+          ...resolution
+        });
+
+      } catch (preferredError) {
+        console.log(
+          "우선 카메라 연결 실패. 기본 후면 카메라로 복귀:",
+          preferredError
+        );
+
+        // 우선 카메라 실행 실패 시 최초 연결 카메라 복구
+        stopCurrentCamera();
+        await new Promise(resolve => setTimeout(resolve, 250));
+
+        try {
+          if (initialDeviceId) {
+            await openCamera({
+              deviceId: { exact: initialDeviceId },
+              ...resolution
+            });
+          } else {
+            await openCamera({
+              facingMode: { ideal: "environment" },
+              ...resolution
+            });
+          }
+
+        } catch (restoreError) {
+          console.log("기본 카메라 복구 실패:", restoreError);
+
+          // 마지막 대체 경로: 브라우저 기본 카메라
+          await openCamera({
+            ...resolution
+          });
+        }
+      }
+    }
+
+    // 최종 연결된 카메라의 목록상 위치 확인
     const currentId = getCurrentDeviceId();
 
     currentCameraIndex = cameraList.findIndex(function(device) {
@@ -611,9 +731,18 @@ async function startCameraSelection() {
     scanning = true;
 
     setMainStatus("대기", "wait");
+
+    const currentCamera =
+      currentCameraIndex >= 0 ? cameraList[currentCameraIndex] : null;
+
+    const cameraLabel =
+      currentCamera && currentCamera.label
+        ? currentCamera.label
+        : "선택된 카메라";
+
     setDetailStatus(
-      "카메라 연결 완료. 등록된 카메라 " +
-      cameraList.length + "개"
+      "카메라 연결 완료: " + cameraLabel +
+      " / 등록된 카메라 " + cameraList.length + "개"
     );
 
     scanLoop();
@@ -852,6 +981,7 @@ async function decodeCanvas(canvas) {
       if (results && results.length > 0 && results[0].rawValue) {
         return results[0].rawValue;
       }
+
     } catch (error) {
       console.log("BarcodeDetector 인식 실패:", error);
     }
@@ -1028,6 +1158,11 @@ async function processDecodedText(text) {
 
   const extracted = extractBatteryData(text);
 
+  // 유효한 길이의 QR 데이터가 인식된 카메라를 다음 접속 때 우선 사용
+  if (extracted) {
+    rememberSuccessfulCamera();
+  }
+
   showRecentResult(text, extracted);
 
   if (!extracted) {
@@ -1179,6 +1314,7 @@ async function initializeScanner() {
 
         barcodeDetectorAvailable = true;
       }
+
     } catch (error) {
       console.log("BarcodeDetector 초기화 실패:", error);
     }
